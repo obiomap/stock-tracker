@@ -751,6 +751,47 @@ def create_app() -> Flask:
             abs(s["price"] - s["ma50"]) / s["ma50"] < 0.015
         ][:4]
 
+        # ── Penny stocks with potential ───────────────────────────────────────
+        _penny_threshold = 10.0
+        _penny_stocks = [
+            s for s in _stocks_w_price
+            if (s.get("price") or 0) < _penny_threshold
+            and not sec_mod.is_crypto(s["symbol"])
+        ]
+
+        def _penny_score(s):
+            score = 0
+            if s.get("prediction") in ("BULLISH", "UP"):
+                score += (s.get("prediction_confidence") or 0) * 40
+            rsi = s.get("rsi") or 50
+            if rsi < 35:
+                score += (35 - rsi)           # oversold bonus
+            elif rsi > 65:
+                score -= (rsi - 65)           # overbought penalty
+            vol = s.get("volume") or 0
+            avg = s.get("avg_volume") or 1
+            if avg > 0:
+                score += min(vol / avg - 1, 3) * 5  # volume spike bonus (capped)
+            chg = s.get("change_pct") or 0
+            score += chg * 0.5                # positive momentum bonus
+            return score
+
+        penny_rising    = sorted(
+            [s for s in _penny_stocks if (s.get("change_pct") or 0) > 0],
+            key=_penny_score, reverse=True
+        )[:5]
+        penny_oversold  = sorted(
+            [s for s in _penny_stocks if (s.get("rsi") or 99) < 35],
+            key=lambda x: x.get("rsi") or 99
+        )[:5]
+        penny_volume    = sorted(
+            [s for s in _penny_stocks
+             if (s.get("avg_volume") or 0) > 10000
+             and (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1) > 1.5],
+            key=lambda x: (x.get("volume") or 0) / max(x.get("avg_volume") or 1, 1),
+            reverse=True
+        )[:5]
+
         # upcoming earnings for What to Watch section
         upcoming_earnings_all = db.get_upcoming_earnings()
 
@@ -815,6 +856,27 @@ def create_app() -> Flask:
             *[_sotw_row(s, f'<span class="sotw-vol">Vol {s["volume"]/s["avg_volume"]:.1f}x avg</span>') for s in sotw_volume],
         ]
         extremes_rows = "".join(_extremes) or f'<p class="sotw-empty">No extremes detected</p>'
+
+        # penny stocks html rows
+        def _penny_row(s, extra=""):
+            sym = sec_mod.display_symbol(s["symbol"])
+            pr  = _fmt_price(s.get("price"), s["symbol"])
+            chg = s.get("change_pct") or 0
+            return (f'<div class="sotw-row penny-row">'
+                    f'<span class="sotw-sym">{sym}</span>'
+                    f'<span class="sotw-price">${pr}</span>'
+                    f'<span class="{_chg_cls(chg)} sotw-chg">{_chg_str(chg)}</span>'
+                    f'{extra}</div>')
+
+        penny_rising_rows   = "".join(
+            _penny_row(s, _signal_badge(s)) for s in penny_rising
+        ) or '<p class="sotw-empty">No rising penny stocks right now</p>'
+        penny_oversold_rows = "".join(
+            _penny_row(s, f'<span class="sotw-rsi up">RSI {s["rsi"]:.0f}</span>') for s in penny_oversold
+        ) or '<p class="sotw-empty">No oversold penny stocks</p>'
+        penny_volume_rows   = "".join(
+            _penny_row(s, f'<span class="sotw-vol">Vol {(s["volume"]/max(s["avg_volume"],1)):.1f}x</span>') for s in penny_volume
+        ) or '<p class="sotw-empty">No volume spikes in penny stocks</p>'
 
         # earnings html
         def _days_cls(d):
@@ -1021,6 +1083,28 @@ def create_app() -> Flask:
       <div class="sotw-card">
         <div class="sotw-head">&#x1F4CA; Technical Extremes</div>
         {extremes_rows}
+      </div>
+    </div>
+  </div>
+
+  <!-- PENNY STOCKS WITH POTENTIAL -->
+  <div class="sotw-section">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F4B0; Penny Stocks with Potential</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">Price &lt; $10 &mdash; ranked by signal + RSI + volume</span>
+    </div>
+    <div class="sotw-grid">
+      <div class="sotw-card">
+        <div class="sotw-head">&#x1F4C8; Rising &amp; Bullish</div>
+        {penny_rising_rows}
+      </div>
+      <div class="sotw-card">
+        <div class="sotw-head">&#x1F7E2; Oversold (RSI &lt; 35)</div>
+        {penny_oversold_rows}
+      </div>
+      <div class="sotw-card">
+        <div class="sotw-head">&#x26A1; Volume Spikes</div>
+        {penny_volume_rows}
       </div>
     </div>
   </div>
