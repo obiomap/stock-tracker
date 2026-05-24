@@ -122,7 +122,7 @@ def load_config() -> dict:
 
 
 def _apply_env_overrides(config: dict) -> None:
-    """Override email/SMS settings from environment variables (used on Railway)."""
+    """Override email/SMS/Resend settings from environment variables (used on Railway)."""
     email = config.setdefault("email", {})
     if os.environ.get("EMAIL_SENDER"):
         email["sender"] = os.environ["EMAIL_SENDER"]
@@ -132,6 +132,23 @@ def _apply_env_overrides(config: dict) -> None:
         email["recipient"] = os.environ["EMAIL_RECIPIENT"]
     if os.environ.get("EMAIL_ENABLED"):
         email["enabled"] = os.environ["EMAIL_ENABLED"].lower() in ("1", "true", "yes")
+
+    # Resend
+    if os.environ.get("RESEND_API_KEY"):
+        config["resend_api_key"] = os.environ["RESEND_API_KEY"]
+    if os.environ.get("RESEND_FROM"):
+        config["resend_from"] = os.environ["RESEND_FROM"]
+
+    # Twilio SMS
+    sms = config.setdefault("sms", {})
+    if os.environ.get("TWILIO_ACCOUNT_SID"):
+        sms["twilio_sid"] = os.environ["TWILIO_ACCOUNT_SID"]
+    if os.environ.get("TWILIO_AUTH_TOKEN"):
+        sms["twilio_token"] = os.environ["TWILIO_AUTH_TOKEN"]
+    if os.environ.get("TWILIO_FROM_NUMBER"):
+        sms["twilio_from"] = os.environ["TWILIO_FROM_NUMBER"]
+    if sms.get("twilio_sid") and sms.get("twilio_token") and sms.get("twilio_from"):
+        sms["enabled"] = True
 
 
 def save_config(config: dict) -> None:
