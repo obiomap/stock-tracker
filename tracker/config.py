@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -100,8 +101,24 @@ def load_config() -> dict:
         merged["alerts"]  = {**DEFAULT_CONFIG["alerts"],  **data.get("alerts", {})}
         merged["industry_etfs"]  = {**DEFAULT_CONFIG["industry_etfs"],  **data.get("industry_etfs", {})}
         merged["stock_sectors"]  = {**DEFAULT_CONFIG["stock_sectors"],  **data.get("stock_sectors", {})}
+        _apply_env_overrides(merged)
         return merged
-    return {k: (v.copy() if isinstance(v, dict) else v) for k, v in DEFAULT_CONFIG.items()}
+    base = {k: (v.copy() if isinstance(v, dict) else v) for k, v in DEFAULT_CONFIG.items()}
+    _apply_env_overrides(base)
+    return base
+
+
+def _apply_env_overrides(config: dict) -> None:
+    """Override email/SMS settings from environment variables (used on Railway)."""
+    email = config.setdefault("email", {})
+    if os.environ.get("EMAIL_SENDER"):
+        email["sender"] = os.environ["EMAIL_SENDER"]
+    if os.environ.get("EMAIL_PASSWORD"):
+        email["password"] = os.environ["EMAIL_PASSWORD"]
+    if os.environ.get("EMAIL_RECIPIENT"):
+        email["recipient"] = os.environ["EMAIL_RECIPIENT"]
+    if os.environ.get("EMAIL_ENABLED"):
+        email["enabled"] = os.environ["EMAIL_ENABLED"].lower() in ("1", "true", "yes")
 
 
 def save_config(config: dict) -> None:
