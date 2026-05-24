@@ -3,20 +3,23 @@ Sector catalog: predefined categories, their stocks, and dashboard colors.
 """
 
 SECTOR_COLORS: dict[str, str] = {
-    "AI & Machine Learning": "bright_magenta",
-    "Technology":            "bright_cyan",
-    "Semiconductors":        "bright_yellow",
-    "Healthcare & Biotech":  "bright_green",
-    "Quantum Computing":     "medium_purple1",
-    "ETFs":                  "bright_white",
-    "Financials":            "gold1",
-    "Energy & Clean Energy": "orange3",
-    "Consumer":              "sky_blue2",
-    "Real Estate":           "deep_sky_blue1",
-    "Industrials":           "sandy_brown",
-    "Penny Stocks":          "orange_red1",
-    "Cryptocurrency":        "bright_yellow",
-    "General":               "white",
+    "AI & Machine Learning":  "bright_magenta",
+    "Technology":             "bright_cyan",
+    "Semiconductors":         "bright_yellow",
+    "Healthcare & Biotech":   "bright_green",
+    "Quantum Computing":      "medium_purple1",
+    "ETFs":                   "bright_white",
+    "Financials":             "gold1",
+    "Energy & Clean Energy":  "orange3",
+    "Consumer":               "sky_blue2",
+    "Real Estate":            "deep_sky_blue1",
+    "Industrials":            "sandy_brown",
+    "Penny Stocks":           "orange_red1",
+    "Cryptocurrency":         "bright_yellow",
+    "Asian Markets":          "red1",
+    "European Markets":       "cornflower_blue",
+    "Nigerian Exchange (NGX)":"green3",
+    "General":                "white",
 }
 
 SECTOR_CATALOG: dict[str, dict] = {
@@ -268,6 +271,100 @@ SECTOR_CATALOG: dict[str, dict] = {
             "MMM":  "3M — diversified industrial products and adhesives conglomerate",
             "CSX":  "CSX — major US freight railroad operator",
             "NOC":  "Northrop Grumman — B-21 stealth bomber, space and cyber defense",
+        },
+    },
+    "Asian Markets": {
+        "description": "Top Asian equities — Japan, China, India, South Korea and regional ETFs.",
+        "key_drivers": [
+            "China economic data and PBOC policy",
+            "Japan BOJ interest rate decisions",
+            "India GDP growth and RBI policy",
+            "US-China trade relations and tariffs",
+            "Regional tech sector sentiment",
+        ],
+        "stocks": {
+            # Japan
+            "TM":    "Toyota — world's largest automaker by volume",
+            "SONY":  "Sony — consumer electronics, gaming (PlayStation), entertainment",
+            "NTDOY": "Nintendo — Switch console, Mario/Zelda IP, mobile gaming",
+            "HMC":   "Honda — autos, motorcycles, and growing EV line-up",
+            "MUFG":  "Mitsubishi UFJ — Japan's largest bank by assets",
+            # China
+            "BABA":  "Alibaba — China's e-commerce and cloud leader",
+            "BIDU":  "Baidu — China's Google + autonomous driving (Apollo)",
+            "JD":    "JD.com — China's second largest e-commerce platform",
+            "PDD":   "PDD Holdings — Pinduoduo + Temu global e-commerce",
+            "TCEHY": "Tencent — WeChat super-app, gaming, fintech (ADR)",
+            "BYDDY": "BYD — world's #1 EV maker by volume (ADR)",
+            # India
+            "INFY":  "Infosys — India's second largest IT services firm",
+            "HDB":   "HDFC Bank — India's largest private bank",
+            "IBN":   "ICICI Bank — India's second largest private bank",
+            "TTM":   "Tata Motors — Jaguar Land Rover + fast-growing EV arm",
+            "WIT":   "Wipro — global IT services and consulting",
+            # Regional ETFs
+            "EWJ":   "iShares MSCI Japan ETF — broad Japan large-cap exposure",
+            "MCHI":  "iShares MSCI China ETF — 600+ Chinese large/mid caps",
+            "INDA":  "iShares MSCI India ETF — India's top 85% market-cap stocks",
+            "EWY":   "iShares MSCI South Korea ETF — Samsung, SK Hynix, Hyundai",
+            "FXI":   "iShares China Large-Cap ETF — 50 largest H-share Chinese stocks",
+        },
+    },
+    "European Markets": {
+        "description": "Leading European equities — UK, Germany, France, Switzerland and regional ETFs.",
+        "key_drivers": [
+            "ECB interest rate decisions",
+            "EUR/USD exchange rate",
+            "Germany industrial output and PMI",
+            "UK Bank of England policy",
+            "Energy prices (EU heavily import-dependent)",
+        ],
+        "stocks": {
+            # United Kingdom
+            "HSBC":  "HSBC — largest European bank, global trade finance hub",
+            "SHEL":  "Shell — global energy major, LNG and renewables",
+            "AZN":   "AstraZeneca — UK/Sweden pharma; oncology and vaccines",
+            "BP":    "BP — integrated energy with growing renewables arm",
+            "GSK":   "GSK — vaccines, HIV treatments, consumer health",
+            "UL":    "Unilever — 400+ consumer brands (Dove, Hellmann's, Ben & Jerry's)",
+            "RIO":   "Rio Tinto — global mining; iron ore, copper, lithium",
+            # Germany
+            "SAP":   "SAP — Europe's largest software firm; ERP and cloud",
+            "DB":    "Deutsche Bank — Germany's largest lender",
+            "SIEGY": "Siemens — industrial automation, smart infrastructure",
+            # France
+            "LVMUY": "LVMH — world's largest luxury group (Louis Vuitton, Dior)",
+            "TTE":   "TotalEnergies — French oil & gas + top solar developer",
+            "EADSY": "Airbus — world's largest commercial aircraft maker",
+            # Switzerland
+            "NVS":   "Novartis — global pharma; heart failure, eye care",
+            "NSRGY": "Nestlé — world's largest food & beverage company",
+            # Regional ETFs
+            "VGK":   "Vanguard FTSE Europe ETF — 1,300+ European stocks",
+            "EZU":   "iShares MSCI Eurozone ETF — 18-country eurozone exposure",
+            "EWU":   "iShares MSCI United Kingdom ETF — FTSE large/mid caps",
+        },
+    },
+    "Nigerian Exchange (NGX)": {
+        "description": "Top Nigerian Stock Exchange blue-chips — banking, telecoms, cement, and consumer staples.",
+        "key_drivers": [
+            "CBN monetary policy and naira exchange rate",
+            "Oil price (Nigeria is Africa's top crude exporter)",
+            "Inflation and consumer purchasing power",
+            "Government fiscal spending and subsidy policy",
+            "Foreign portfolio investor flows",
+        ],
+        "stocks": {
+            "DANGCEM.LG":   "Dangote Cement — Africa's largest cement producer",
+            "GTCO.LG":      "Guaranty Trust — leading Nigerian bank and fintech",
+            "ZENITHBANK.LG":"Zenith Bank — top-tier commercial bank, strong dividends",
+            "MTNN.LG":      "MTN Nigeria — largest mobile telecom operator in Nigeria",
+            "BUACEMENT.LG": "BUA Cement — second largest cement maker in Nigeria",
+            "ACCESSCORP.LG":"Access Holdings — Nigeria's largest bank by total assets",
+            "AIRTELAFRI.LG":"Airtel Africa — pan-African telecoms and mobile money",
+            "FBNH.LG":      "First Bank Nigeria Holdings — oldest Nigerian commercial bank",
+            "NESTLE.LG":    "Nestlé Nigeria — leading FMCG brand (Milo, Maggi, Golden Morn)",
+            "SEPLAT.LG":    "Seplat Energy — Nigeria's largest independent oil & gas producer",
         },
     },
     "Cryptocurrency": {

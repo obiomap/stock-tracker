@@ -42,6 +42,20 @@ DEFAULT_CONFIG = {
         "WKHS", "LCID", "NIO",          # EV / clean transport
         "CLOV", "SPCE", "MVIS",         # Speculative tech
         "BBAI", "SOUN", "KULR",         # AI / small-cap tech
+        # Asian Markets
+        "TM", "SONY", "NTDOY", "HMC", "MUFG",          # Japan
+        "BABA", "BIDU", "JD", "PDD", "TCEHY", "BYDDY", # China
+        "INFY", "HDB", "IBN", "TTM", "WIT",             # India
+        "EWJ", "MCHI", "INDA", "EWY", "FXI",            # Asian ETFs
+        # European Markets
+        "HSBC", "SHEL", "AZN", "BP", "GSK", "UL", "RIO",  # UK
+        "SAP", "DB", "SIEGY",                               # Germany
+        "LVMUY", "TTE", "EADSY",                            # France
+        "NVS", "NSRGY",                                     # Switzerland
+        "VGK", "EZU", "EWU",                                # European ETFs
+        # Nigerian Exchange (NGX)
+        "DANGCEM.LG", "GTCO.LG", "ZENITHBANK.LG", "MTNN.LG", "BUACEMENT.LG",
+        "ACCESSCORP.LG", "AIRTELAFRI.LG", "FBNH.LG", "NESTLE.LG", "SEPLAT.LG",
     ],
     "stock_sectors": {
         # Penny stocks sector mapping

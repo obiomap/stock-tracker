@@ -23,9 +23,12 @@ _SECTOR_CSS = {
     "Consumer":              "#0284c7",
     "Real Estate":           "#0ea5e9",
     "Industrials":           "#f97316",
-    "Penny Stocks":          "#dc2626",
-    "Cryptocurrency":        "#d97706",
-    "General":               "#64748b",
+    "Penny Stocks":           "#dc2626",
+    "Cryptocurrency":         "#d97706",
+    "Asian Markets":          "#ef4444",
+    "European Markets":       "#3b82f6",
+    "Nigerian Exchange (NGX)":"#16a34a",
+    "General":                "#64748b",
 }
 
 _CAT_COLORS = {
