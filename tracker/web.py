@@ -536,6 +536,57 @@ body{
 .impact-low{background:rgba(99,102,241,.2);color:#a5b4fc}
 .level-bar{height:3px;background:rgba(255,255,255,.1);border-radius:2px;margin-top:4px;overflow:hidden}
 .level-fill{height:100%;border-radius:2px;transition:width .4s}
+
+/* ── WATCHLIST TABLE ── */
+.wl-section{margin-bottom:40px}
+.wl-controls{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.wl-search{background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.11);
+           color:#e2e8f0;padding:8px 14px;border-radius:8px;font-size:13px;
+           width:220px;transition:border-color .2s}
+.wl-search::placeholder{color:rgba(255,255,255,.28)}
+.wl-search:focus{outline:none;border-color:var(--primary);background:rgba(255,255,255,.10)}
+.wl-btn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.11);
+        color:rgba(255,255,255,.65);padding:7px 14px;border-radius:8px;font-size:12px;
+        cursor:pointer;font-weight:600;transition:all .15s}
+.wl-btn:hover{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.22)}
+.wl-ts{font-size:11px;color:rgba(255,255,255,.28);margin-left:auto}
+.wl-wrap{overflow-x:auto;border-radius:12px;
+         border:1px solid rgba(255,255,255,.09);
+         background:rgba(255,255,255,.02)}
+.wl-table{width:100%;border-collapse:collapse;font-size:13px;min-width:640px}
+.wl-table thead th{padding:10px 14px;text-align:left;font-size:11px;font-weight:700;
+                   text-transform:uppercase;letter-spacing:.6px;
+                   color:rgba(255,255,255,.38);background:rgba(0,0,0,.28);
+                   position:sticky;top:0;z-index:2;white-space:nowrap}
+.wl-table thead th:not(:first-child){text-align:right}
+.wl-sect-row td{padding:9px 14px;font-size:11px;font-weight:700;
+                text-transform:uppercase;letter-spacing:.8px;
+                background:rgba(0,0,0,.22);cursor:pointer;user-select:none;
+                border-top:1px solid rgba(255,255,255,.05)}
+.wl-sect-row:first-child td{border-top:none}
+.wl-sect-toggle{display:flex;align-items:center;gap:8px}
+.wl-sect-count{opacity:.38;font-size:10px;font-weight:500;margin-left:4px}
+.wl-sect-chev{margin-left:auto;font-size:10px;opacity:.38;
+              display:inline-block;transition:transform .22s}
+.wl-sect-row.wl-open .wl-sect-chev{transform:rotate(180deg)}
+.wl-row td{padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.038)}
+.wl-row:last-of-type td,.wl-row.wl-last td{border-bottom:none}
+.wl-row:hover td{background:rgba(255,255,255,.04)}
+.wl-row.wl-hidden{display:none}
+.wl-sym{font-weight:700;color:#e2e8f0;white-space:nowrap}
+.wl-price{color:#e2e8f0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wl-chg{font-weight:700;text-align:right;white-space:nowrap}
+.wl-vol{color:rgba(255,255,255,.42);text-align:right;font-size:12px}
+.wl-rsi{text-align:right;font-size:12px;font-weight:600}
+.wl-vs{text-align:right;font-size:12px;font-weight:600}
+.wl-sig{text-align:right}
+.wl-conf{text-align:right;color:rgba(255,255,255,.38);font-size:12px}
+.wl-badge{display:inline-block;padding:2px 9px;border-radius:50px;font-size:11px;font-weight:700;white-space:nowrap}
+.wl-bull{background:rgba(16,185,129,.2);color:#34d399}
+.wl-bear{background:rgba(239,68,68,.2);color:#f87171}
+.wl-neut{background:rgba(99,102,241,.14);color:#818cf8}
+.wl-na{color:rgba(255,255,255,.22)}
+@media(max-width:580px){.wl-search{width:100%}.wl-controls{flex-direction:column;align-items:flex-start}.wl-ts{margin-left:0}}
 """
 
 
@@ -972,6 +1023,89 @@ def create_app() -> Flask:
             for e in _market_events
         )
 
+        # -- watchlist table
+        wl_grouped: dict[str, list] = {}
+        for sym in watchlist:
+            s = all_db.get(sym)
+            if not s or s.get("price") is None:
+                continue
+            sect = sec_mod.resolve_sector(sym, stock_sectors)
+            wl_grouped.setdefault(sect, []).append(s)
+
+        wl_rows = ""
+        for sect in sorted(wl_grouped.keys(), key=_skey):
+            color  = _sector_css(sect)
+            syms_in_sect = sorted(wl_grouped[sect], key=lambda x: x["symbol"])
+            sect_id = "".join(c if c.isalnum() else "_" for c in sect)
+
+            wl_rows += (
+                f'<tr class="wl-sect-row" data-sid="{sect_id}">'
+                f'<td colspan="8"><div class="wl-sect-toggle">'
+                f'<span style="color:{color}">{sect}</span>'
+                f'<span class="wl-sect-count">({len(syms_in_sect)})</span>'
+                f'<span class="wl-sect-chev">&#x25BE;</span>'
+                f'</div></td></tr>'
+            )
+            for i, s in enumerate(syms_in_sect):
+                sym   = s["symbol"]
+                disp  = sec_mod.display_symbol(sym)
+                price = s.get("price") or 0
+                chg   = s.get("change_pct") or 0
+                vol   = s.get("volume") or 0
+                rsi   = s.get("rsi")
+                ma50  = s.get("ma50")
+                pred  = s.get("prediction") or "NEUTRAL"
+                conf  = (s.get("prediction_confidence") or 0) * 100
+
+                chg_cls = "up" if chg >= 0 else "down"
+                chg_str = f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%"
+
+                if vol >= 1_000_000:
+                    vol_str = f"{vol/1_000_000:.1f}M"
+                elif vol >= 1_000:
+                    vol_str = f"{vol/1_000:.0f}K"
+                else:
+                    vol_str = str(vol) if vol else "—"
+
+                rsi_str = f"{rsi:.0f}" if rsi else "—"
+                rsi_cls = "down" if (rsi and rsi >= 70) else ("up" if (rsi and rsi <= 30) else "wl-na")
+
+                if price and ma50:
+                    vs_pct = (price - ma50) / ma50 * 100
+                    vs_str = f"{vs_pct:+.1f}%"
+                    vs_cls = "up" if vs_pct >= 0 else "down"
+                else:
+                    vs_str, vs_cls = "—", "wl-na"
+
+                if pred in ("BULLISH", "UP"):
+                    sig_cls, sig_label = "wl-bull", "Bullish"
+                elif pred in ("BEARISH", "DOWN"):
+                    sig_cls, sig_label = "wl-bear", "Bearish"
+                else:
+                    sig_cls, sig_label = "wl-neut", "Neutral"
+
+                last_row = "wl-last" if i == len(syms_in_sect) - 1 else ""
+
+                wl_rows += (
+                    f'<tr class="wl-row wl-hidden {last_row}" data-sid="{sect_id}" '
+                    f'data-sym="{sym.lower()}" data-sect="{sect.lower()}">'
+                    f'<td class="wl-sym">{disp}</td>'
+                    f'<td class="wl-price">{_fmt_price(price, sym)}</td>'
+                    f'<td class="wl-chg {chg_cls}">{chg_str}</td>'
+                    f'<td class="wl-vol">{vol_str}</td>'
+                    f'<td class="wl-rsi {rsi_cls}">{rsi_str}</td>'
+                    f'<td class="wl-vs {vs_cls}">{vs_str}</td>'
+                    f'<td class="wl-sig"><span class="wl-badge {sig_cls}">{sig_label}</span></td>'
+                    f'<td class="wl-conf">{conf:.0f}%</td>'
+                    f'</tr>'
+                )
+
+        n_tracked = sum(len(v) for v in wl_grouped.values())
+        from datetime import datetime as _wl_dt
+        wl_last_refresh = "Updated " + _wl_dt.now().strftime("%H:%M UTC")
+        if not wl_rows:
+            wl_rows = '<tr><td colspan="8" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
+
         # -- knowledge base preview (4 random-ish topics)
         preview_keys = ["rsi", "macd", "patterns_golden_cross", "risk_position_sizing"]
         topic_cards = ""
@@ -1004,6 +1138,7 @@ def create_app() -> Flask:
 <nav class="nav">
   <div class="nav-logo"><span>&#x1F4C8;</span> Stock Tracker</div>
   <div class="nav-links">
+    <a href="#watchlist">&#x1F4CA; Live Prices</a>
     <a href="/learn">Knowledge Base</a>
     <a href="#subscribe" class="nav-cta">Get Alerts</a>
   </div>
@@ -1167,6 +1302,39 @@ def create_app() -> Flask:
     </div>
   </div>
 
+  <!-- WATCHLIST TABLE -->
+  <div class="wl-section" id="watchlist">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F4CA; Live Watchlist</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">{n_tracked} stocks tracked &bull; refreshes every 5 min</span>
+    </div>
+    <div class="wl-controls">
+      <input type="search" class="wl-search" id="wlSearch" placeholder="&#x1F50D; Filter symbol or sector&hellip;" autocomplete="off">
+      <button class="wl-btn" id="wlExpandAll">Expand All</button>
+      <button class="wl-btn" id="wlCollapseAll">Collapse All</button>
+      <span class="wl-ts">{wl_last_refresh}</span>
+    </div>
+    <div class="wl-wrap">
+      <table class="wl-table" id="wlTable">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th style="text-align:right">Price</th>
+            <th style="text-align:right">Chg&nbsp;%</th>
+            <th style="text-align:right">Volume</th>
+            <th style="text-align:right">RSI</th>
+            <th style="text-align:right">vs&nbsp;MA50</th>
+            <th style="text-align:right">Signal</th>
+            <th style="text-align:right">Conf</th>
+          </tr>
+        </thead>
+        <tbody id="wlBody">
+          {wl_rows}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- KNOWLEDGE PREVIEW -->
   <div class="section-head">
     <h2>&#x1F4DA; Start learning</h2>
@@ -1205,11 +1373,87 @@ def create_app() -> Flask:
 
 <script>
 (function(){{
-  // Sector collapse/expand toggle
+  // Subscribe form: sector collapse/expand toggle
   document.querySelectorAll('.sector-toggle').forEach(function(toggle){{
     toggle.addEventListener('click', function(){{
       var group = toggle.closest('.sector-group');
       group.classList.toggle('open');
+    }});
+  }});
+
+  // ── Watchlist table ──────────────────────────────────────────────────
+  function wlToggleSect(sectRow){{
+    var sid  = sectRow.dataset.sid;
+    var open = sectRow.classList.toggle('wl-open');
+    document.querySelectorAll('.wl-row[data-sid="' + sid + '"]').forEach(function(r){{
+      r.classList.toggle('wl-hidden', !open);
+    }});
+  }}
+
+  // Click on sector header rows
+  document.querySelectorAll('.wl-sect-row').forEach(function(row){{
+    row.addEventListener('click', function(){{ wlToggleSect(row); }});
+  }});
+
+  // Expand All
+  var wlExpBtn = document.getElementById('wlExpandAll');
+  if(wlExpBtn) wlExpBtn.addEventListener('click', function(){{
+    document.querySelectorAll('.wl-sect-row').forEach(function(r){{
+      if(!r.classList.contains('wl-open')) wlToggleSect(r);
+    }});
+  }});
+
+  // Collapse All
+  var wlColBtn = document.getElementById('wlCollapseAll');
+  if(wlColBtn) wlColBtn.addEventListener('click', function(){{
+    document.querySelectorAll('.wl-sect-row').forEach(function(r){{
+      if(r.classList.contains('wl-open')) wlToggleSect(r);
+    }});
+  }});
+
+  // Search / filter
+  var wlSearch = document.getElementById('wlSearch');
+  if(wlSearch) wlSearch.addEventListener('input', function(){{
+    var q = this.value.toLowerCase().trim();
+    var sidsSeen = {{}};
+    // Filter data rows
+    document.querySelectorAll('.wl-row').forEach(function(r){{
+      var sym  = (r.dataset.sym  || '').toLowerCase();
+      var sect = (r.dataset.sect || '').toLowerCase();
+      var match = !q || sym.includes(q) || sect.includes(q);
+      r.style.display = match ? '' : 'none';
+      if(match){{
+        var sid = r.dataset.sid;
+        sidsSeen[sid] = true;
+      }}
+    }});
+    // Show/hide sector headers based on whether any rows match
+    document.querySelectorAll('.wl-sect-row').forEach(function(r){{
+      var sid = r.dataset.sid;
+      if(q){{
+        if(sidsSeen[sid]){{
+          r.style.display = '';
+          // Auto-expand matched sectors
+          if(!r.classList.contains('wl-open')){{
+            r.classList.add('wl-open');
+          }}
+          // Show matched rows
+          document.querySelectorAll('.wl-row[data-sid="' + sid + '"]').forEach(function(dr){{
+            if(dr.style.display !== 'none') dr.classList.remove('wl-hidden');
+          }});
+        }} else {{
+          r.style.display = 'none';
+        }}
+      }} else {{
+        r.style.display = '';
+        // Restore hidden state for non-open sectors
+        if(!r.classList.contains('wl-open')){{
+          document.querySelectorAll('.wl-row[data-sid="' + sid + '"]').forEach(function(dr){{
+            dr.classList.add('wl-hidden');
+            dr.style.display = '';
+          }});
+        }}
+      }}
     }});
   }});
 }})();
