@@ -1,9 +1,18 @@
 import sqlite3
 import json
+import os
 from pathlib import Path
 from datetime import datetime
 
-DB_PATH = Path(__file__).parent.parent / "stocks.db"
+# Use persistent volume on Railway (/app/data), fall back to repo root locally
+_DATA_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "")) or Path(__file__).parent.parent
+if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH"):
+    _DATA_DIR = Path(os.environ["RAILWAY_VOLUME_MOUNT_PATH"])
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+else:
+    _DATA_DIR = Path(__file__).parent.parent
+
+DB_PATH = _DATA_DIR / "stocks.db"
 
 
 def get_connection() -> sqlite3.Connection:
