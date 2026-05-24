@@ -776,21 +776,35 @@ def create_app() -> Flask:
             score += chg * 0.5                # positive momentum bonus
             return score
 
-        penny_rising    = sorted(
-            [s for s in _penny_stocks if (s.get("change_pct") or 0) > 0],
-            key=_penny_score, reverse=True
-        )[:5]
+        # "Rising & Bullish" — top scored penny stocks (no change_pct gate so weekends work)
+        penny_rising    = sorted(_penny_stocks, key=_penny_score, reverse=True)[:5]
+        # "Oversold" — RSI < 45 (relaxed from 35 so at least a few always show)
         penny_oversold  = sorted(
-            [s for s in _penny_stocks if (s.get("rsi") or 99) < 35],
+            [s for s in _penny_stocks if (s.get("rsi") or 99) < 45],
             key=lambda x: x.get("rsi") or 99
         )[:5]
+        # fallback: if nothing under 45, show lowest RSI stocks
+        if not penny_oversold:
+            penny_oversold = sorted(
+                [s for s in _penny_stocks if s.get("rsi")],
+                key=lambda x: x.get("rsi") or 99
+            )[:5]
+        # "Volume Spikes" — >1.2x avg, lowered from 1.5x; no minimum avg_volume gate
         penny_volume    = sorted(
             [s for s in _penny_stocks
-             if (s.get("avg_volume") or 0) > 10000
-             and (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1) > 1.5],
+             if (s.get("volume") or 0) > 0
+             and (s.get("avg_volume") or 0) > 0
+             and (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1) > 1.2],
             key=lambda x: (x.get("volume") or 0) / max(x.get("avg_volume") or 1, 1),
             reverse=True
         )[:5]
+        # fallback: show highest relative-volume penny stocks
+        if not penny_volume:
+            penny_volume = sorted(
+                [s for s in _penny_stocks if (s.get("avg_volume") or 0) > 0],
+                key=lambda x: (x.get("volume") or 0) / max(x.get("avg_volume") or 1, 1),
+                reverse=True
+            )[:5]
 
         # upcoming earnings for What to Watch section
         upcoming_earnings_all = db.get_upcoming_earnings()
@@ -1099,7 +1113,7 @@ def create_app() -> Flask:
         {penny_rising_rows}
       </div>
       <div class="sotw-card">
-        <div class="sotw-head">&#x1F7E2; Oversold (RSI &lt; 35)</div>
+        <div class="sotw-head">&#x1F7E2; Oversold (RSI &lt; 45)</div>
         {penny_oversold_rows}
       </div>
       <div class="sotw-card">
