@@ -28,10 +28,15 @@ DEFAULT_CONFIG = {
         "SUI-USD", "HBAR-USD", "XLM-USD", "ATOM-USD",
         # Layer 2s / DeFi
         "MATIC-USD", "ARB-USD", "OP-USD", "LINK-USD", "UNI-USD",
+        "AAVE-USD", "MKR-USD", "LDO-USD", "CRV-USD", "GRT-USD",
         # AI / DePIN tokens
-        "RNDR-USD", "FET-USD", "SEI-USD",
+        "RNDR-USD", "FET-USD", "SEI-USD", "TAO-USD",
+        # New ecosystems / RWA
+        "TIA-USD", "WLD-USD", "JUP-USD", "ENA-USD", "ONDO-USD", "IMX-USD",
+        # Blue-chip alts
+        "DOT-USD", "LTC-USD", "ALGO-USD", "ICP-USD", "VET-USD", "FTM-USD",
         # Meme coins
-        "DOGE-USD", "SHIB-USD", "PEPE-USD", "WIF-USD",
+        "DOGE-USD", "SHIB-USD", "PEPE-USD", "WIF-USD", "BONK-USD", "FLOKI-USD",
         # Real Estate (REITs)
         "AMT", "PLD", "EQIX", "O", "VICI", "SPG",
         # Industrials
@@ -95,9 +100,25 @@ DEFAULT_CONFIG = {
         # Tech additions
         "SMCI": "Technology", "DDOG": "Technology",
         "RBLX": "Technology", "RDDT": "Technology", "HIMS": "Technology",
+        # Crypto — Layer 1s (blue-chip alts)
+        "DOT-USD":  "Cryptocurrency", "LTC-USD":  "Cryptocurrency",
+        "ALGO-USD": "Cryptocurrency", "ICP-USD":  "Cryptocurrency",
+        "VET-USD":  "Cryptocurrency", "FTM-USD":  "Cryptocurrency",
+        # Crypto — Layer 2s / DeFi
+        "MATIC-USD":"Cryptocurrency", "ARB-USD":  "Cryptocurrency",
+        "OP-USD":   "Cryptocurrency", "LINK-USD": "Cryptocurrency",
+        "UNI-USD":  "Cryptocurrency", "AAVE-USD": "Cryptocurrency",
+        "MKR-USD":  "Cryptocurrency", "LDO-USD":  "Cryptocurrency",
+        "CRV-USD":  "Cryptocurrency", "GRT-USD":  "Cryptocurrency",
         # Crypto AI/DePIN
-        "RNDR-USD": "Cryptocurrency", "FET-USD": "Cryptocurrency",
-        "SEI-USD":  "Cryptocurrency",
+        "RNDR-USD": "Cryptocurrency", "FET-USD":  "Cryptocurrency",
+        "SEI-USD":  "Cryptocurrency", "TAO-USD":  "Cryptocurrency",
+        # Crypto — New ecosystems / RWA
+        "TIA-USD":  "Cryptocurrency", "WLD-USD":  "Cryptocurrency",
+        "JUP-USD":  "Cryptocurrency", "ENA-USD":  "Cryptocurrency",
+        "ONDO-USD": "Cryptocurrency", "IMX-USD":  "Cryptocurrency",
+        # Crypto — Meme coins
+        "BONK-USD": "Cryptocurrency", "FLOKI-USD":"Cryptocurrency",
         # Penny stocks sector mapping
         "SNDL": "Penny Stocks", "ACB": "Penny Stocks", "CRON": "Penny Stocks",
         "OCGN": "Penny Stocks", "ATOS": "Penny Stocks", "BNGO": "Penny Stocks",

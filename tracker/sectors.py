@@ -474,18 +474,31 @@ SECTOR_CATALOG: dict[str, dict] = {
             "UNI-USD":  "Uniswap — governance token of the largest DEX by volume",
             "AAVE-USD": "Aave — leading decentralized lending and borrowing protocol",
             "MKR-USD":  "Maker — governs DAI stablecoin, oldest DeFi protocol",
+            "LDO-USD":  "Lido DAO — liquid staking protocol; issues stETH for Ethereum stakers",
+            "CRV-USD":  "Curve Finance — stablecoin AMM DEX optimised for low-slippage swaps",
+            "GRT-USD":  "The Graph — indexing protocol ('Google for blockchains')",
             # AI / DePIN tokens
             "RNDR-USD": "Render — decentralized GPU rendering network for AI and 3D",
             "FET-USD":  "Fetch.ai (ASI) — AI agents on blockchain, merged with Ocean+SingularityNET",
             "SEI-USD":  "Sei — high-performance L1 optimized for trading and DeFi",
+            "TAO-USD":  "Bittensor — decentralized AI network with incentivised machine learning",
+            # New ecosystems / RWA
+            "TIA-USD":  "Celestia — modular blockchain providing a dedicated data availability layer",
+            "WLD-USD":  "Worldcoin — iris-scan proof-of-personhood + global UBI token (Tools for Humanity)",
+            "JUP-USD":  "Jupiter — leading Solana DEX aggregator and liquidity router",
+            "ENA-USD":  "Ethena — synthetic dollar protocol (USDe) backed by ETH staking yield",
+            "ONDO-USD": "Ondo Finance — tokenised US Treasury RWA protocol for on-chain yield",
+            "IMX-USD":  "Immutable X — Ethereum L2 for gaming and NFTs; gas-free minting",
             # Meme coins
             "DOGE-USD": "Dogecoin — original meme coin, Elon Musk favourite",
             "SHIB-USD": "Shiba Inu — meme coin ecosystem with ShibaSwap DEX",
             "PEPE-USD": "Pepe — largest frog-themed meme coin by market cap",
             "WIF-USD":  "dogwifhat — top Solana meme coin",
-            "BONK-USD": "Bonk — Solana's community meme coin",
-            # Other
+            "BONK-USD": "Bonk — Solana's community meme coin airdropped to NFT holders",
+            "FLOKI-USD":"Floki — meme coin with Valhalla gaming metaverse and DeFi ecosystem",
+            # Other blue-chip alts
             "LTC-USD":  "Litecoin — 'silver to Bitcoin's gold,' fast cheap payments",
+            "FTM-USD":  "Fantom (Sonic) — high-speed EVM-compatible L1 with DAG consensus",
             "BNB-USD":  "BNB — Binance exchange token and BNB Chain gas fee",
             "FIL-USD":  "Filecoin — decentralized file storage network",
         },
