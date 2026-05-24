@@ -36,7 +36,7 @@ DEFAULT_CONFIG = {
         # Gaming / Metaverse
         "SAND-USD", "MANA-USD", "AXS-USD", "CHZ-USD",
         # DeFi / cross-chain
-        "INJ-USD", "RUNE-USD", "STX-USD",
+        "INJ-USD", "RUNE-USD", "STX4847-USD",
         # Privacy / PoW alts
         "ZEC-USD", "KAS-USD",
         # Blue-chip alts
@@ -135,7 +135,7 @@ DEFAULT_CONFIG = {
         "AXS-USD":   "Cryptocurrency", "CHZ-USD":   "Cryptocurrency",
         # Crypto — DeFi / cross-chain
         "INJ-USD":   "Cryptocurrency", "RUNE-USD":  "Cryptocurrency",
-        "STX-USD":   "Cryptocurrency",
+        "STX4847-USD": "Cryptocurrency",
         # Crypto — Privacy / PoW alts
         "ZEC-USD":   "Cryptocurrency", "KAS-USD":   "Cryptocurrency",
         # Crypto — Layer 1s (blue-chip alts)

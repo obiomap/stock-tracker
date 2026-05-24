@@ -534,7 +534,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             # DeFi / cross-chain
             "INJ-USD":       "Injective — high-speed L1 for DeFi derivatives and orderbook DEXes",
             "RUNE-USD":      "THORchain — native cross-chain DEX; swap BTC/ETH/BNB without wrapping",
-            "STX-USD":       "Stacks — Bitcoin L2 enabling smart contracts and DeFi on Bitcoin",
+            "STX4847-USD":   "Stacks — Bitcoin L2 enabling smart contracts and DeFi on Bitcoin",
             # Privacy / PoW alts
             "ZEC-USD":       "Zcash — privacy coin using zk-SNARKs for shielded transactions",
             "KAS-USD":       "Kaspa — fastest PoW blockchain using GHOSTDAG; 10 blocks/second",
