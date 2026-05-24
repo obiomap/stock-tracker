@@ -23,6 +23,7 @@ SECTOR_COLORS: dict[str, str] = {
     "European Markets":       "cornflower_blue",
     "Latin America":          "chartreuse3",
     "Nigerian Exchange (NGX)":"green3",
+    "African Markets":        "dark_orange",
     "General":                "white",
 }
 
@@ -195,6 +196,20 @@ SECTOR_CATALOG: dict[str, dict] = {
             "BOTZ": "Global Robotics & AI ETF",
             "VWO":  "Vanguard FTSE Emerging Markets ETF — 5,000+ EM stocks (China, India, Brazil)",
             "KSA":  "iShares MSCI Saudi Arabia ETF — Saudi Aramco + Vision 2030 stocks",
+            # Leveraged ETFs
+            "SOXL": "Direxion 3x Semiconductor Bull — amplified SOXX exposure",
+            "TQQQ": "ProShares 3x QQQ Bull — amplified Nasdaq-100 exposure",
+            "UPRO": "ProShares 3x S&P 500 Bull — amplified SPY exposure",
+            # Thematic ETFs
+            "ICLN": "iShares Global Clean Energy ETF — solar, wind, hydro",
+            "LIT":  "Global X Lithium & Battery Tech — EV supply chain",
+            "DRIV": "Global X Autonomous & Electric Vehicles ETF",
+            "SKYY": "First Trust Cloud Computing ETF — SaaS and IaaS leaders",
+            "CLOU": "Global X Cloud Computing ETF — pure-play cloud companies",
+            "AIQ":  "Global X AI & Technology ETF — AI hardware and software",
+            "JETS": "US Global Jets ETF — airlines and airport operators",
+            "XBI":  "SPDR S&P Biotech ETF — equal-weight biotech exposure",
+            "HACK": "ETFMG Prime Cyber Security ETF — cybersecurity pure-plays",
         },
     },
     "Commodities & Bonds": {
@@ -456,10 +471,36 @@ SECTOR_CATALOG: dict[str, dict] = {
             "NSRGY": "Nestlé — world's largest food & beverage company",
             # Australia (dual-listed London/ASX)
             "BHP":   "BHP Group — world's largest mining company; iron ore, copper, coal",
+            # Nordic / Denmark
+            "NVO":   "Novo Nordisk — world's largest GLP-1 (Ozempic/Wegovy) maker, Denmark",
+            # Italy
+            "RACE":  "Ferrari — ultra-premium sports cars; near-zero demand elasticity",
+            # Netherlands
+            "STLA":  "Stellantis — Jeep, RAM, Peugeot, Citroën, Fiat parent (top-5 global auto)",
+            "ING":   "ING Groep — pan-European retail and wholesale bank",
+            # Switzerland / Italy chips
+            "STM":   "STMicroelectronics — automotive & industrial chip leader (EU's top chip maker)",
+            # Finland
+            "NOK":   "Nokia — telecom infrastructure and 5G network equipment",
             # Regional ETFs
             "VGK":   "Vanguard FTSE Europe ETF — 1,300+ European stocks",
             "EZU":   "iShares MSCI Eurozone ETF — 18-country eurozone exposure",
             "EWU":   "iShares MSCI United Kingdom ETF — FTSE large/mid caps",
+        },
+    },
+    "African Markets": {
+        "description": "Leading African equities — South Africa's telecoms and media giants, listed as US ADRs.",
+        "key_drivers": [
+            "South African rand (ZAR) exchange rate",
+            "Sub-Saharan Africa subscriber growth",
+            "Tencent stake value (NPSNY holds ~25% of Tencent)",
+            "African internet and mobile money penetration",
+        ],
+        "stocks": {
+            "MTNOY": "MTN Group — Africa's largest telecom; 280M+ subscribers across 19 countries",
+            "NPSNY": "Naspers/Prosus — South Africa tech holding company; major Tencent shareholder",
+            "AAF.L": "Anglo African Finance — London-listed Nigerian financial services",
+            "SEPL.L": "Seplat Energy — Nigerian oil & gas producer, London-listed",
         },
     },
     "Nigerian Exchange (NGX)": {

@@ -86,10 +86,19 @@ DEFAULT_CONFIG = {
         "NVS", "NSRGY",                                     # Switzerland
         "BHP",                                              # Australia (dual-listed London)
         "VGK", "EZU", "EWU",                                # European ETFs
+        # Europe additions
+        "NVO", "RACE", "STLA", "STM", "ING", "NOK",        # Pharma, Luxury, Auto, Chips, Banking, Telecom
+        # African Markets
+        "MTNOY", "NPSNY",                                   # MTN Group (SA), Naspers/Prosus (SA)
         # Global / Emerging Market ETFs
         "VWO", "KSA",
         # Nigerian / African stocks (London-listed, Yahoo Finance supported)
         "AAF.L", "SEPL.L",
+        # Thematic & Leveraged ETFs
+        "SOXL", "TQQQ", "UPRO",                             # Leveraged (3x Semis, QQQ, S&P 500)
+        "ICLN", "LIT", "DRIV",                              # Clean energy, Lithium/Battery, EV/Auto
+        "SKYY", "CLOU", "AIQ",                              # Cloud computing, AI & Tech ETFs
+        "JETS", "XBI", "HACK",                              # Airlines, Biotech, Cybersecurity ETFs
     ],
     "stock_sectors": {
         # Cybersecurity
@@ -183,6 +192,17 @@ DEFAULT_CONFIG = {
         "SIEGY": "European Markets", "LVMUY": "European Markets", "TTE": "European Markets",
         "EADSY": "European Markets", "NVS": "European Markets", "NSRGY": "European Markets",
         "VGK": "European Markets", "EZU": "European Markets", "EWU": "European Markets",
+        # Europe additions
+        "NVO":   "European Markets", "RACE":  "European Markets",
+        "STLA":  "European Markets", "STM":   "European Markets",
+        "ING":   "European Markets", "NOK":   "European Markets",
+        # African Markets
+        "MTNOY": "African Markets", "NPSNY": "African Markets",
+        # Thematic & Leveraged ETFs
+        "SOXL":  "ETFs", "TQQQ":  "ETFs", "UPRO":  "ETFs",
+        "ICLN":  "ETFs", "LIT":   "ETFs", "DRIV":  "ETFs",
+        "SKYY":  "ETFs", "CLOU":  "ETFs", "AIQ":   "ETFs",
+        "JETS":  "ETFs", "XBI":   "ETFs", "HACK":  "ETFs",
     },
     "industry_etfs": {
         "Technology": "XLK",

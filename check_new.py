@@ -11,12 +11,10 @@ prices = re.findall(r'class="wl-price"[^>]*>([^<]+)<', html)
 table = {s.upper(): p.strip() for s, p in zip(syms, prices)}
 
 new = {
-    "US Tech/AI":    ["NOW","ANET","SNOW","TTD","APP","MSTR","SPOT","DUOL","CELH"],
-    "Latin America": ["MELI","VALE","ITUB","EWZ"],
-    "SE Asia":       ["SE","GRAB"],
-    "Global ETFs":   ["KWEB","EWT","EWA","VWO","KSA","BHP"],
-    "Crypto new":    ["SAND-USD","MANA-USD","AXS-USD","CHZ-USD",
-                      "INJ-USD","RUNE-USD","STX4847-USD","ZEC-USD","KAS-USD"],
+    "Europe new":    ["NVO","RACE","STLA","STM","ING","NOK"],
+    "African Mkts":  ["MTNOY","NPSNY"],
+    "Leveraged ETFs":["SOXL","TQQQ","UPRO"],
+    "Thematic ETFs": ["ICLN","LIT","DRIV","SKYY","CLOU","AIQ","JETS","XBI","HACK"],
 }
 
 total_ok = total_wait = 0
