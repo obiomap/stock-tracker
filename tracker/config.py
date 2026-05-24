@@ -28,6 +28,8 @@ DEFAULT_CONFIG = {
         "SUI-USD", "HBAR-USD", "XLM-USD", "ATOM-USD",
         # Layer 2s / DeFi
         "MATIC-USD", "ARB-USD", "OP-USD", "LINK-USD", "UNI-USD",
+        # AI / DePIN tokens
+        "RNDR-USD", "FET-USD", "SEI-USD",
         # Meme coins
         "DOGE-USD", "SHIB-USD", "PEPE-USD", "WIF-USD",
         # Real Estate (REITs)
@@ -36,6 +38,19 @@ DEFAULT_CONFIG = {
         "CAT", "BA", "GE", "HON", "UPS", "FDX", "LMT", "RTX",
         # High-growth / AI plays
         "PLTR", "IONQ", "RGTI", "QUBT", "QBTS", "SHOP",
+        "SMCI", "DDOG", "RBLX", "RDDT", "HIMS",
+        # Cybersecurity
+        "CRWD", "PANW", "NET", "ZS", "OKTA", "FTNT", "S",
+        # Fintech
+        "PYPL", "SQ", "COIN", "HOOD", "SOFI", "AFRM",
+        # Commodities & Bonds ETFs
+        "GLD", "SLV", "GDX", "USO", "TLT", "DIA",
+        # Consumer & Entertainment additions
+        "DIS", "ABNB", "DASH", "KO", "PG", "SBUX",
+        # Healthcare additions
+        "ABT", "ISRG", "MDT", "BMY",
+        # Financials additions
+        "BAC", "WFC", "MS", "C", "SCHW",
         # Penny stocks with potential
         "SNDL", "ACB", "CRON",          # Cannabis
         "OCGN", "ATOS", "BNGO",         # Biotech
@@ -57,6 +72,32 @@ DEFAULT_CONFIG = {
         "AAF.L", "SEPL.L",
     ],
     "stock_sectors": {
+        # Cybersecurity
+        "CRWD": "Cybersecurity", "PANW": "Cybersecurity", "NET":  "Cybersecurity",
+        "ZS":   "Cybersecurity", "OKTA": "Cybersecurity", "FTNT": "Cybersecurity",
+        "S":    "Cybersecurity",
+        # Fintech
+        "PYPL": "Fintech", "SQ":   "Fintech", "COIN": "Fintech",
+        "HOOD": "Fintech", "SOFI": "Fintech", "AFRM": "Fintech",
+        # Commodities & Bonds
+        "GLD": "Commodities & Bonds", "SLV": "Commodities & Bonds",
+        "GDX": "Commodities & Bonds", "USO": "Commodities & Bonds",
+        "TLT": "Commodities & Bonds", "DIA": "Commodities & Bonds",
+        # Consumer additions
+        "DIS":  "Consumer", "ABNB": "Consumer", "DASH": "Consumer",
+        "KO":   "Consumer", "PG":   "Consumer", "SBUX": "Consumer",
+        # Healthcare additions
+        "ABT":  "Healthcare & Biotech", "ISRG": "Healthcare & Biotech",
+        "MDT":  "Healthcare & Biotech", "BMY":  "Healthcare & Biotech",
+        # Financials additions
+        "BAC":  "Financials", "WFC": "Financials", "MS": "Financials",
+        "C":    "Financials", "SCHW": "Financials",
+        # Tech additions
+        "SMCI": "Technology", "DDOG": "Technology",
+        "RBLX": "Technology", "RDDT": "Technology", "HIMS": "Technology",
+        # Crypto AI/DePIN
+        "RNDR-USD": "Cryptocurrency", "FET-USD": "Cryptocurrency",
+        "SEI-USD":  "Cryptocurrency",
         # Penny stocks sector mapping
         "SNDL": "Penny Stocks", "ACB": "Penny Stocks", "CRON": "Penny Stocks",
         "OCGN": "Penny Stocks", "ATOS": "Penny Stocks", "BNGO": "Penny Stocks",
