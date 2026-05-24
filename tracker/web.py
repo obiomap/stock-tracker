@@ -542,7 +542,7 @@ body{
 .wl-controls{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
 .wl-search{background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.11);
            color:#e2e8f0;padding:8px 14px;border-radius:8px;font-size:13px;
-           width:220px;transition:border-color .2s}
+           flex:1;max-width:340px;min-width:160px;transition:border-color .2s}
 .wl-search::placeholder{color:rgba(255,255,255,.28)}
 .wl-search:focus{outline:none;border-color:var(--primary);background:rgba(255,255,255,.10)}
 .wl-btn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.11);
@@ -694,7 +694,8 @@ def create_app() -> Flask:
         response.headers["X-XSS-Protection"]          = "1; mode=block"
         response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
         response.headers["Content-Security-Policy"]   = (
-            "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; img-src 'self' data:"
+            "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+            "form-action 'self'; img-src 'self' data:"
         )
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
         return response
