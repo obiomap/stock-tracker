@@ -53,9 +53,8 @@ DEFAULT_CONFIG = {
         "LVMUY", "TTE", "EADSY",                            # France
         "NVS", "NSRGY",                                     # Switzerland
         "VGK", "EZU", "EWU",                                # European ETFs
-        # Nigerian Exchange (NGX)
-        "DANGCEM.LG", "GTCO.LG", "ZENITHBANK.LG", "MTNN.LG", "BUACEMENT.LG",
-        "ACCESSCORP.LG", "AIRTELAFRI.LG", "FBNH.LG", "NESTLE.LG", "SEPLAT.LG",
+        # Nigerian / African stocks (London-listed, Yahoo Finance supported)
+        "AAF.L", "SEPL.L",
     ],
     "stock_sectors": {
         # Penny stocks sector mapping
@@ -64,6 +63,24 @@ DEFAULT_CONFIG = {
         "WKHS": "Penny Stocks", "LCID": "Penny Stocks", "NIO":  "Penny Stocks",
         "CLOV": "Penny Stocks", "SPCE": "Penny Stocks", "MVIS": "Penny Stocks",
         "BBAI": "Penny Stocks", "SOUN": "Penny Stocks", "KULR": "Penny Stocks",
+        # Nigerian Exchange (NGX) - London-listed
+        "AAF.L": "Nigerian Exchange (NGX)", "SEPL.L": "Nigerian Exchange (NGX)",
+        # Asian Markets
+        "TM": "Asian Markets", "SONY": "Asian Markets", "NTDOY": "Asian Markets",
+        "HMC": "Asian Markets", "MUFG": "Asian Markets",
+        "BABA": "Asian Markets", "BIDU": "Asian Markets", "JD": "Asian Markets",
+        "PDD": "Asian Markets", "TCEHY": "Asian Markets", "BYDDY": "Asian Markets",
+        "INFY": "Asian Markets", "HDB": "Asian Markets", "IBN": "Asian Markets",
+        "TTM": "Asian Markets", "WIT": "Asian Markets",
+        "EWJ": "Asian Markets", "MCHI": "Asian Markets", "INDA": "Asian Markets",
+        "EWY": "Asian Markets", "FXI": "Asian Markets",
+        # European Markets
+        "HSBC": "European Markets", "SHEL": "European Markets", "AZN": "European Markets",
+        "BP": "European Markets", "GSK": "European Markets", "UL": "European Markets",
+        "RIO": "European Markets", "SAP": "European Markets", "DB": "European Markets",
+        "SIEGY": "European Markets", "LVMUY": "European Markets", "TTE": "European Markets",
+        "EADSY": "European Markets", "NVS": "European Markets", "NSRGY": "European Markets",
+        "VGK": "European Markets", "EZU": "European Markets", "EWU": "European Markets",
     },
     "industry_etfs": {
         "Technology": "XLK",
