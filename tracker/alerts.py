@@ -1,3 +1,4 @@
+import os
 import smtplib
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -6,6 +7,41 @@ from typing import Optional
 from . import database as db
 from . import sms as sms_mod
 
+
+# ── Resend (preferred) ────────────────────────────────────────────────────────
+
+def _resend_api_key(config: dict) -> str:
+    return os.environ.get("RESEND_API_KEY") or config.get("resend_api_key", "")
+
+
+def _resend_from(config: dict) -> str:
+    """Sender address — must be from a Resend-verified domain."""
+    return (os.environ.get("RESEND_FROM")
+            or config.get("resend_from", "")
+            or config.get("email", {}).get("sender", "onboarding@resend.dev"))
+
+
+def _can_send_resend(config: dict) -> bool:
+    return bool(_resend_api_key(config))
+
+
+def _send_via_resend(subject: str, html_body: str, to: str, config: dict) -> bool:
+    try:
+        import resend
+        resend.api_key = _resend_api_key(config)
+        resend.Emails.send({
+            "from": _resend_from(config),
+            "to": [to],
+            "subject": subject,
+            "html": html_body,
+        })
+        return True
+    except Exception as e:
+        print(f"[Resend error] {e}")
+        return False
+
+
+# ── SMTP fallback ─────────────────────────────────────────────────────────────
 
 def _smtp_connection(config: dict):
     email_cfg = config.get("email", {})
@@ -16,23 +52,35 @@ def _smtp_connection(config: dict):
     return server
 
 
-def _can_send(config: dict) -> bool:
+def _can_send_smtp(config: dict) -> bool:
     email_cfg = config.get("email", {})
     return bool(email_cfg.get("enabled") and email_cfg.get("sender") and email_cfg.get("password"))
 
 
-def send_email(subject: str, html_body: str, config: dict, recipient: str | None = None) -> bool:
-    if not _can_send(config):
-        return False
-    email_cfg = config["email"]
-    to = recipient or email_cfg["recipient"]
+def _can_send(config: dict) -> bool:
+    return _can_send_resend(config) or _can_send_smtp(config)
 
+
+# ── Public interface ──────────────────────────────────────────────────────────
+
+def send_email(subject: str, html_body: str, config: dict, recipient: str | None = None) -> bool:
+    email_cfg = config.get("email", {})
+    to = recipient or email_cfg.get("recipient", "")
+    if not to:
+        return False
+
+    # Prefer Resend
+    if _can_send_resend(config):
+        return _send_via_resend(subject, html_body, to, config)
+
+    # Fall back to SMTP
+    if not _can_send_smtp(config):
+        return False
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = email_cfg["sender"]
     msg["To"] = to
     msg.attach(MIMEText(html_body, "html"))
-
     try:
         with _smtp_connection(config) as server:
             server.sendmail(email_cfg["sender"], to, msg.as_string())
@@ -48,12 +96,22 @@ def send_to_subscribers(subject: str, html_body: str, relevant_symbols: set[str]
         return 0
     subscribers = db.get_active_subscribers()
     sent = 0
+
+    if _can_send_resend(config):
+        # Resend: one call per subscriber
+        for sub in subscribers:
+            sub_stocks = set(sub["stocks"])
+            if not sub_stocks or sub_stocks & relevant_symbols:
+                if _send_via_resend(subject, html_body, sub["email"], config):
+                    sent += 1
+        return sent
+
+    # SMTP fallback: reuse connection across subscribers
     try:
         conn = _smtp_connection(config)
     except Exception as e:
         print(f"[SMTP connect error] {e}")
         return 0
-
     try:
         for sub in subscribers:
             sub_stocks = set(sub["stocks"])
