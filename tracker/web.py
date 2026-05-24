@@ -608,15 +608,21 @@ def _sector_css(sector: str) -> str:
 
 
 def _fmt_price(price, sym="") -> str:
+    """Format a price with appropriate precision (handles micro-price crypto)."""
     if price is None:
         return "N/A"
     if sec_mod.is_crypto(sym) and price > 1000:
         return f"${price:,.0f}"
-    if price < 1:
-        return f"${price:.4f}"
-    if price < 10:
+    if price >= 100:
+        return f"${price:,.2f}"
+    if price >= 1:
         return f"${price:.3f}"
-    return f"${price:.2f}"
+    if price >= 0.01:
+        return f"${price:.4f}"
+    if price >= 0.0001:
+        return f"${price:.6f}"
+    # micro-price tokens: SHIB, BONK, PEPE, FLOKI, etc.
+    return f"${price:.8f}"
 
 
 def _ticker_html(stocks: list[dict]) -> str:

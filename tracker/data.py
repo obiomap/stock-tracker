@@ -35,17 +35,19 @@ def fetch_ticker_snapshot(symbol: str) -> Optional[dict]:
             return None
 
         avg_vol = int(hist["Volume"].tail(20).mean())
+        raw_price = float(fi.get("lastPrice") or hist["Close"].iloc[-1])
+        raw_prev  = float(fi.get("previousClose") or hist["Close"].iloc[-2])
         result = {
-            "symbol": symbol,
-            "price": round(fi.get("lastPrice") or hist["Close"].iloc[-1], 2),
-            "prev_close": round(fi.get("previousClose") or hist["Close"].iloc[-2], 2),
-            "volume": int(fi.get("lastVolume") or hist["Volume"].iloc[-1]),
+            "symbol":     symbol,
+            "price":      raw_price,   # full precision — avoids rounding micro-prices to 0
+            "prev_close": raw_prev,
+            "volume":     int(fi.get("lastVolume") or hist["Volume"].iloc[-1]),
             "avg_volume": avg_vol,
-            "hist": hist,
+            "hist":       hist,
         }
         result["change_pct"] = round(
-            (result["price"] - result["prev_close"]) / result["prev_close"] * 100, 2
-        )
+            (raw_price - raw_prev) / raw_prev * 100, 2
+        ) if raw_prev else 0.0
         _store(cache_key, result)
         return result
     except Exception:
