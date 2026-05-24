@@ -24,19 +24,19 @@ DEFAULT_CONFIG = {
         "SPY", "QQQ", "VTI", "IWM",
         # Crypto — Layer 1s
         "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "BNB-USD",
-        "ADA-USD", "AVAX-USD", "TON-USD", "NEAR-USD", "APT-USD",
-        "SUI-USD", "HBAR-USD", "XLM-USD", "ATOM-USD",
+        "ADA-USD", "AVAX-USD", "TON-USD", "NEAR-USD", "APT21794-USD",
+        "SUI20947-USD", "HBAR-USD", "XLM-USD", "ATOM-USD",
         # Layer 2s / DeFi
-        "MATIC-USD", "ARB-USD", "OP-USD", "LINK-USD", "UNI-USD",
-        "AAVE-USD", "MKR-USD", "LDO-USD", "CRV-USD", "GRT-USD",
+        "POL28321-USD", "ARB-USD", "OP-USD", "LINK-USD", "UNI7083-USD",
+        "AAVE-USD", "MKR-USD", "LDO-USD", "CRV-USD", "GRT6719-USD",
         # AI / DePIN tokens
-        "RNDR-USD", "FET-USD", "SEI-USD", "TAO-USD",
+        "RENDER-USD", "FET-USD", "SEI-USD", "TAO22974-USD",
         # New ecosystems / RWA
-        "TIA-USD", "WLD-USD", "JUP-USD", "ENA-USD", "ONDO-USD", "IMX-USD",
+        "TIA-USD", "WLD-USD", "JUP-USD", "ENA-USD", "ONDO-USD", "IMX10603-USD",
         # Blue-chip alts
-        "DOT-USD", "LTC-USD", "ALGO-USD", "ICP-USD", "VET-USD", "FTM-USD",
+        "DOT-USD", "LTC-USD", "ALGO-USD", "ICP-USD", "VET-USD",
         # Meme coins
-        "DOGE-USD", "SHIB-USD", "PEPE-USD", "WIF-USD", "BONK-USD", "FLOKI-USD",
+        "DOGE-USD", "SHIB-USD", "PEPE24478-USD", "WIF-USD", "BONK-USD", "FLOKI-USD",
         # Real Estate (REITs)
         "AMT", "PLD", "EQIX", "O", "VICI", "SPG",
         # Industrials
@@ -101,24 +101,26 @@ DEFAULT_CONFIG = {
         "SMCI": "Technology", "DDOG": "Technology",
         "RBLX": "Technology", "RDDT": "Technology", "HIMS": "Technology",
         # Crypto — Layer 1s (blue-chip alts)
-        "DOT-USD":  "Cryptocurrency", "LTC-USD":  "Cryptocurrency",
-        "ALGO-USD": "Cryptocurrency", "ICP-USD":  "Cryptocurrency",
-        "VET-USD":  "Cryptocurrency", "FTM-USD":  "Cryptocurrency",
+        "DOT-USD":       "Cryptocurrency", "LTC-USD":      "Cryptocurrency",
+        "ALGO-USD":      "Cryptocurrency", "ICP-USD":      "Cryptocurrency",
+        "VET-USD":       "Cryptocurrency",
+        "APT21794-USD":  "Cryptocurrency", "SUI20947-USD": "Cryptocurrency",
         # Crypto — Layer 2s / DeFi
-        "MATIC-USD":"Cryptocurrency", "ARB-USD":  "Cryptocurrency",
-        "OP-USD":   "Cryptocurrency", "LINK-USD": "Cryptocurrency",
-        "UNI-USD":  "Cryptocurrency", "AAVE-USD": "Cryptocurrency",
-        "MKR-USD":  "Cryptocurrency", "LDO-USD":  "Cryptocurrency",
-        "CRV-USD":  "Cryptocurrency", "GRT-USD":  "Cryptocurrency",
+        "POL28321-USD":  "Cryptocurrency", "ARB-USD":      "Cryptocurrency",
+        "OP-USD":        "Cryptocurrency", "LINK-USD":     "Cryptocurrency",
+        "UNI7083-USD":   "Cryptocurrency", "AAVE-USD":     "Cryptocurrency",
+        "MKR-USD":       "Cryptocurrency", "LDO-USD":      "Cryptocurrency",
+        "CRV-USD":       "Cryptocurrency", "GRT6719-USD":  "Cryptocurrency",
         # Crypto AI/DePIN
-        "RNDR-USD": "Cryptocurrency", "FET-USD":  "Cryptocurrency",
-        "SEI-USD":  "Cryptocurrency", "TAO-USD":  "Cryptocurrency",
+        "RENDER-USD":    "Cryptocurrency", "FET-USD":      "Cryptocurrency",
+        "SEI-USD":       "Cryptocurrency", "TAO22974-USD": "Cryptocurrency",
         # Crypto — New ecosystems / RWA
-        "TIA-USD":  "Cryptocurrency", "WLD-USD":  "Cryptocurrency",
-        "JUP-USD":  "Cryptocurrency", "ENA-USD":  "Cryptocurrency",
-        "ONDO-USD": "Cryptocurrency", "IMX-USD":  "Cryptocurrency",
+        "TIA-USD":       "Cryptocurrency", "WLD-USD":      "Cryptocurrency",
+        "JUP-USD":       "Cryptocurrency", "ENA-USD":      "Cryptocurrency",
+        "ONDO-USD":      "Cryptocurrency", "IMX10603-USD": "Cryptocurrency",
         # Crypto — Meme coins
-        "BONK-USD": "Cryptocurrency", "FLOKI-USD":"Cryptocurrency",
+        "PEPE24478-USD": "Cryptocurrency",
+        "BONK-USD":      "Cryptocurrency", "FLOKI-USD":    "Cryptocurrency",
         # Penny stocks sector mapping
         "SNDL": "Penny Stocks", "ACB": "Penny Stocks", "CRON": "Penny Stocks",
         "OCGN": "Penny Stocks", "ATOS": "Penny Stocks", "BNGO": "Penny Stocks",
