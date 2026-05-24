@@ -21,6 +21,7 @@ SECTOR_COLORS: dict[str, str] = {
     "Commodities & Bonds":    "khaki3",
     "Asian Markets":          "red1",
     "European Markets":       "cornflower_blue",
+    "Latin America":          "chartreuse3",
     "Nigerian Exchange (NGX)":"green3",
     "General":                "white",
 }
@@ -71,6 +72,13 @@ SECTOR_CATALOG: dict[str, dict] = {
             "RBLX":  "Roblox — metaverse gaming platform, 80M+ daily users",
             "RDDT":  "Reddit — social media platform and community data moat",
             "HIMS":  "Hims & Hers — telehealth and direct-to-consumer pharma",
+            "NOW":   "ServiceNow — enterprise workflow automation and AI platform",
+            "ANET":  "Arista Networks — cloud networking switches for AI data centers",
+            "SNOW":  "Snowflake — cloud data platform and AI data sharing",
+            "TTD":   "The Trade Desk — programmatic digital advertising platform",
+            "APP":   "AppLovin — AI-powered mobile app growth and advertising",
+            "MSTR":  "MicroStrategy — largest corporate Bitcoin holder + analytics BI",
+            "DUOL":  "Duolingo — AI-powered language learning app, 97M daily users",
         },
     },
     "Semiconductors": {
@@ -185,6 +193,8 @@ SECTOR_CATALOG: dict[str, dict] = {
             "ARKK": "ARK Innovation — disruptive tech, high risk/reward",
             "SOXX": "iShares Semiconductor ETF",
             "BOTZ": "Global Robotics & AI ETF",
+            "VWO":  "Vanguard FTSE Emerging Markets ETF — 5,000+ EM stocks (China, India, Brazil)",
+            "KSA":  "iShares MSCI Saudi Arabia ETF — Saudi Aramco + Vision 2030 stocks",
         },
     },
     "Commodities & Bonds": {
@@ -286,6 +296,9 @@ SECTOR_CATALOG: dict[str, dict] = {
             "KO":   "Coca-Cola — global beverage giant, 200+ countries",
             "PG":   "Procter & Gamble — household brands (Tide, Gillette, Pampers)",
             "SBUX": "Starbucks — global coffee chain with loyalty flywheel",
+            "SPOT": "Spotify — global audio streaming leader, 600M+ users",
+            "CELH": "Celsius Holdings — fastest-growing energy drink brand in the US",
+            "MELI": "MercadoLibre — Latin America's e-commerce + fintech giant",
         },
     },
     "Penny Stocks": {
@@ -353,6 +366,22 @@ SECTOR_CATALOG: dict[str, dict] = {
             "NOC":  "Northrop Grumman — B-21 stealth bomber, space and cyber defense",
         },
     },
+    "Latin America": {
+        "description": "Leading Latin American equities and ETFs — Brazil's commodity and fintech giants, and the region's Amazon.",
+        "key_drivers": [
+            "Brazil SELIC interest rate and BRL exchange rate",
+            "Iron ore and commodity prices (Vale, Petrobras)",
+            "Emerging market risk-on/risk-off sentiment",
+            "US dollar strength (inverse for EM assets)",
+            "Political stability and fiscal policy in Brazil/Mexico",
+        ],
+        "stocks": {
+            "MELI":  "MercadoLibre — Latin America's Amazon + Mercado Pago fintech",
+            "VALE":  "Vale — world's largest iron ore and nickel miner (Brazil)",
+            "ITUB":  "Itaú Unibanco — largest bank in Latin America",
+            "EWZ":   "iShares MSCI Brazil ETF — broad Brazil large-cap exposure",
+        },
+    },
     "Asian Markets": {
         "description": "Top Asian equities — Japan, China, India, South Korea and regional ETFs.",
         "key_drivers": [
@@ -382,12 +411,18 @@ SECTOR_CATALOG: dict[str, dict] = {
             "IBN":   "ICICI Bank — India's second largest private bank",
             "TTM":   "Tata Motors — Jaguar Land Rover + fast-growing EV arm",
             "WIT":   "Wipro — global IT services and consulting",
+            # Southeast Asia
+            "SE":    "Sea Limited — Shopee e-commerce, Garena gaming, SeaMoney fintech (Singapore)",
+            "GRAB":  "Grab Holdings — Southeast Asia super-app: ride-hail, food, fintech (8 countries)",
             # Regional ETFs
             "EWJ":   "iShares MSCI Japan ETF — broad Japan large-cap exposure",
             "MCHI":  "iShares MSCI China ETF — 600+ Chinese large/mid caps",
             "INDA":  "iShares MSCI India ETF — India's top 85% market-cap stocks",
             "EWY":   "iShares MSCI South Korea ETF — Samsung, SK Hynix, Hyundai",
             "FXI":   "iShares China Large-Cap ETF — 50 largest H-share Chinese stocks",
+            "KWEB":  "KraneShares China Internet ETF — Alibaba, Tencent, Meituan, JD",
+            "EWT":   "iShares MSCI Taiwan ETF — TSMC, MediaTek, Foxconn",
+            "EWA":   "iShares MSCI Australia ETF — BHP, CSL, CBA, Macquarie",
         },
     },
     "European Markets": {
@@ -419,6 +454,8 @@ SECTOR_CATALOG: dict[str, dict] = {
             # Switzerland
             "NVS":   "Novartis — global pharma; heart failure, eye care",
             "NSRGY": "Nestlé — world's largest food & beverage company",
+            # Australia (dual-listed London/ASX)
+            "BHP":   "BHP Group — world's largest mining company; iron ore, copper, coal",
             # Regional ETFs
             "VGK":   "Vanguard FTSE Europe ETF — 1,300+ European stocks",
             "EZU":   "iShares MSCI Eurozone ETF — 18-country eurozone exposure",
@@ -489,6 +526,18 @@ SECTOR_CATALOG: dict[str, dict] = {
             "ENA-USD":       "Ethena — synthetic dollar protocol (USDe) backed by ETH staking yield",
             "ONDO-USD":      "Ondo Finance — tokenised US Treasury RWA protocol for on-chain yield",
             "IMX10603-USD":  "Immutable X — Ethereum L2 for gaming and NFTs; gas-free minting",
+            # Gaming / Metaverse
+            "SAND-USD":      "The Sandbox — voxel metaverse with user-generated content and LAND NFTs",
+            "MANA-USD":      "Decentraland — 3D virtual world with MANA governance and LAND parcels",
+            "AXS-USD":       "Axie Infinity — play-to-earn NFT game; pioneered blockchain gaming",
+            "CHZ-USD":       "Chiliz — fan token platform for sports clubs (Barca, PSG, Juventus)",
+            # DeFi / cross-chain
+            "INJ-USD":       "Injective — high-speed L1 for DeFi derivatives and orderbook DEXes",
+            "RUNE-USD":      "THORchain — native cross-chain DEX; swap BTC/ETH/BNB without wrapping",
+            "STX-USD":       "Stacks — Bitcoin L2 enabling smart contracts and DeFi on Bitcoin",
+            # Privacy / PoW alts
+            "ZEC-USD":       "Zcash — privacy coin using zk-SNARKs for shielded transactions",
+            "KAS-USD":       "Kaspa — fastest PoW blockchain using GHOSTDAG; 10 blocks/second",
             # Meme coins
             "DOGE-USD":      "Dogecoin — original meme coin, Elon Musk favourite",
             "SHIB-USD":      "Shiba Inu — meme coin ecosystem with ShibaSwap DEX",

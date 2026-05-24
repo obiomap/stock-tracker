@@ -33,6 +33,12 @@ DEFAULT_CONFIG = {
         "RENDER-USD", "FET-USD", "SEI-USD", "TAO22974-USD",
         # New ecosystems / RWA
         "TIA-USD", "WLD-USD", "JUP-USD", "ENA-USD", "ONDO-USD", "IMX10603-USD",
+        # Gaming / Metaverse
+        "SAND-USD", "MANA-USD", "AXS-USD", "CHZ-USD",
+        # DeFi / cross-chain
+        "INJ-USD", "RUNE-USD", "STX-USD",
+        # Privacy / PoW alts
+        "ZEC-USD", "KAS-USD",
         # Blue-chip alts
         "DOT-USD", "LTC-USD", "ALGO-USD", "ICP-USD", "VET-USD",
         # Meme coins
@@ -44,6 +50,8 @@ DEFAULT_CONFIG = {
         # High-growth / AI plays
         "PLTR", "IONQ", "RGTI", "QUBT", "QBTS", "SHOP",
         "SMCI", "DDOG", "RBLX", "RDDT", "HIMS",
+        # US Tech / AI additions
+        "NOW", "ANET", "SNOW", "TTD", "APP", "MSTR", "SPOT", "DUOL", "CELH",
         # Cybersecurity
         "CRWD", "PANW", "NET", "ZS", "OKTA", "FTNT", "S",
         # Fintech
@@ -62,17 +70,24 @@ DEFAULT_CONFIG = {
         "WKHS", "LCID", "NIO",          # EV / clean transport
         "CLOV", "SPCE", "MVIS",         # Speculative tech
         "BBAI", "SOUN", "KULR",         # AI / small-cap tech
+        # Latin America
+        "MELI", "VALE", "ITUB", "EWZ",
         # Asian Markets
         "TM", "SONY", "NTDOY", "HMC", "MUFG",          # Japan
         "BABA", "BIDU", "JD", "PDD", "TCEHY", "BYDDY", # China
         "INFY", "HDB", "IBN", "TTM", "WIT",             # India
+        "SE", "GRAB",                                    # Southeast Asia
         "EWJ", "MCHI", "INDA", "EWY", "FXI",            # Asian ETFs
+        "KWEB", "EWT", "EWA",                            # More Asian/Pacific ETFs
         # European Markets
         "HSBC", "SHEL", "AZN", "BP", "GSK", "UL", "RIO",  # UK
         "SAP", "DB", "SIEGY",                               # Germany
         "LVMUY", "TTE", "EADSY",                            # France
         "NVS", "NSRGY",                                     # Switzerland
+        "BHP",                                              # Australia (dual-listed London)
         "VGK", "EZU", "EWU",                                # European ETFs
+        # Global / Emerging Market ETFs
+        "VWO", "KSA",
         # Nigerian / African stocks (London-listed, Yahoo Finance supported)
         "AAF.L", "SEPL.L",
     ],
@@ -100,6 +115,29 @@ DEFAULT_CONFIG = {
         # Tech additions
         "SMCI": "Technology", "DDOG": "Technology",
         "RBLX": "Technology", "RDDT": "Technology", "HIMS": "Technology",
+        # US Tech / AI additions
+        "NOW":  "Technology", "ANET": "Technology", "SNOW": "Technology",
+        "TTD":  "Technology", "APP":  "Technology", "MSTR": "Technology",
+        "SPOT": "Consumer",   "DUOL": "Technology", "CELH": "Consumer",
+        # Latin America
+        "MELI": "Latin America", "VALE": "Latin America",
+        "ITUB": "Latin America", "EWZ":  "Latin America",
+        # Southeast Asia
+        "SE":   "Asian Markets", "GRAB": "Asian Markets",
+        # Asian / Pacific ETFs
+        "KWEB": "Asian Markets", "EWT":  "Asian Markets", "EWA": "Asian Markets",
+        # European additions
+        "BHP":  "European Markets",
+        # Global / Emerging Market ETFs
+        "VWO":  "ETFs", "KSA":  "ETFs",
+        # Crypto — Gaming / Metaverse
+        "SAND-USD":  "Cryptocurrency", "MANA-USD":  "Cryptocurrency",
+        "AXS-USD":   "Cryptocurrency", "CHZ-USD":   "Cryptocurrency",
+        # Crypto — DeFi / cross-chain
+        "INJ-USD":   "Cryptocurrency", "RUNE-USD":  "Cryptocurrency",
+        "STX-USD":   "Cryptocurrency",
+        # Crypto — Privacy / PoW alts
+        "ZEC-USD":   "Cryptocurrency", "KAS-USD":   "Cryptocurrency",
         # Crypto — Layer 1s (blue-chip alts)
         "DOT-USD":       "Cryptocurrency", "LTC-USD":      "Cryptocurrency",
         "ALGO-USD":      "Cryptocurrency", "ICP-USD":      "Cryptocurrency",
