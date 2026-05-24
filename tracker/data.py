@@ -2,22 +2,11 @@ import time
 import warnings
 from typing import Optional
 import pandas as pd
-import requests
 import yfinance as yf
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-# ── shared requests session with browser User-Agent ───────────────────────────
-# Yahoo Finance silently returns empty data for some tickers (especially newer
-# crypto) when requests come from datacenter IPs without a real browser UA.
-_SESSION = requests.Session()
-_SESSION.headers.update({
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    )
-})
+# yfinance >=1.3 uses curl_cffi internally for browser impersonation —
+# do NOT pass a requests.Session; let yfinance handle its own session.
 
 _cache: dict = {}
 _cache_ttl = 60  # seconds
@@ -41,7 +30,7 @@ def fetch_ticker_snapshot(symbol: str) -> Optional[dict]:
         return cached
 
     try:
-        ticker = yf.Ticker(symbol, session=_SESSION)
+        ticker = yf.Ticker(symbol)
         fi = ticker.fast_info
         hist = ticker.history(period="60d", interval="1d", auto_adjust=True)
         if hist.empty:
@@ -74,7 +63,7 @@ def fetch_history(symbol: str, period: str = "2y") -> Optional[pd.DataFrame]:
         return cached
 
     try:
-        ticker = yf.Ticker(symbol, session=_SESSION)
+        ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period, interval="1d", auto_adjust=True)
         if hist.empty:
             return None
@@ -101,7 +90,7 @@ def fetch_calendar(symbol: str) -> Optional[dict]:
         return cached
 
     try:
-        ticker = yf.Ticker(symbol, session=_SESSION)
+        ticker = yf.Ticker(symbol)
         cal = ticker.calendar
         if cal is None or not isinstance(cal, dict):
             return None
@@ -118,7 +107,7 @@ def fetch_earnings_history(symbol: str) -> Optional[pd.DataFrame]:
         return cached
 
     try:
-        ticker = yf.Ticker(symbol, session=_SESSION)
+        ticker = yf.Ticker(symbol)
         df = ticker.earnings_dates
         if df is None or df.empty:
             return None
