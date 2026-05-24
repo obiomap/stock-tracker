@@ -1,0 +1,11 @@
+.venv/
+stocks.db
+config.json
+certs/
+cloudflared.exe
+cf.*.txt
+tunnel_url.txt
+*.bat
+__pycache__/
+*.pyc
+.git/

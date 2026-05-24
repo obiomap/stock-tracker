@@ -1,0 +1,1081 @@
+#!/usr/bin/env python3
+import threading
+import time
+from datetime import datetime
+from typing import Optional
+
+import click
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from tracker import config as cfg_mod
+from tracker import database as db
+from tracker import data as fetcher
+from tracker import indicators as ind
+from tracker import earnings as earn_mod
+from tracker import predictor as pred_mod
+from tracker import alerts as alert_mod
+from tracker import sectors as sec_mod
+from tracker import knowledge as kb_mod
+from tracker import social as social_mod
+from tracker import sms as sms_mod
+
+console = Console()
+
+# ── shared state ──────────────────────────────────────────────────────────────
+_state: dict = {
+    "stocks": [],
+    "earnings": [],
+    "alerts": [],
+    "predictions": {},
+    "last_refresh": None,
+    "refreshing": False,
+    "market_open": False,
+}
+
+
+# ── market hours ──────────────────────────────────────────────────────────────
+def _is_market_open() -> bool:
+    try:
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        now = datetime.now(et)
+        if now.weekday() >= 5:
+            return False
+        open_t = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        close_t = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        return open_t <= now <= close_t
+    except Exception:
+        return True  # assume open if timezone check fails
+
+
+# ── data refresh ──────────────────────────────────────────────────────────────
+def refresh_all(config: dict) -> None:
+    if _state["refreshing"]:
+        return
+    _state["refreshing"] = True
+    try:
+        watchlist = config["watchlist"]
+        snaps = fetcher.fetch_multiple_snapshots(watchlist)
+
+        stocks_out = []
+        predictions_out = {}
+        hist_data = {}
+        earnings_map = {e["symbol"]: e["days_until"] for e in _state["earnings"]}
+
+        for sym in watchlist:
+            snap = snaps.get(sym)
+            if not snap:
+                continue
+            hist = fetcher.fetch_history(sym, period="2y")
+            if hist is None or len(hist) < 30:
+                continue
+            hist_data[sym] = snap
+            hist_data[sym]["hist"] = hist
+
+            ind_data = ind.get_latest_indicators(hist)
+            days_to_earn = earnings_map.get(sym)
+            prediction = pred_mod.generate_prediction(sym, ind_data, snap, days_to_earn)
+            predictions_out[sym] = prediction
+
+            sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
+            stock_row = {
+                "symbol": sym,
+                "price": snap["price"],
+                "prev_close": snap["prev_close"],
+                "change_pct": snap["change_pct"],
+                "volume": snap["volume"],
+                "avg_volume": snap["avg_volume"],
+                "rsi": ind_data["rsi"],
+                "macd": ind_data["macd"],
+                "macd_signal": ind_data["macd_signal"],
+                "bb_pband": ind_data["bb_pband"],
+                "ma20": ind_data["ma20"],
+                "ma50": ind_data["ma50"],
+                "ma200": ind_data["ma200"],
+                "prediction": prediction["signal"],
+                "prediction_confidence": prediction["confidence"],
+                "rule_signals": [s["name"] for s in prediction["rule_signals"]],
+                "sector": sector,
+            }
+            db.upsert_stock(stock_row)
+            stocks_out.append(stock_row)
+
+        earnings_list = earn_mod.refresh_earnings_calendar(watchlist, hist_data)
+        new_alerts = alert_mod.check_and_fire_alerts(stocks_out, earnings_list, predictions_out, config)
+
+        # ── Prediction accuracy tracking ──────────────────────────────────────
+        # Log today's predictions and score any that are 5+ trading days old
+        current_prices = {s["symbol"]: s["price"] for s in stocks_out if s.get("price")}
+        try:
+            for sym, pred in predictions_out.items():
+                price = current_prices.get(sym)
+                if price:
+                    db.log_prediction(
+                        sym, pred["signal"], pred["confidence"],
+                        pred["combined_prob"], price
+                    )
+            db.score_pending_predictions(current_prices, score_after_days=5)
+        except Exception:
+            pass
+
+        _state["stocks"] = stocks_out
+        _state["earnings"] = earnings_list
+        _state["predictions"] = predictions_out
+        _state["alerts"] = db.get_recent_alerts(8)
+        _state["last_refresh"] = datetime.now()
+        _state["market_open"] = _is_market_open()
+    finally:
+        _state["refreshing"] = False
+
+
+# ── dashboard renderers ───────────────────────────────────────────────────────
+def _header_panel() -> Panel:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status = "[green]OPEN[/green]" if _state["market_open"] else "[red]CLOSED[/red]"
+    last = _state["last_refresh"].strftime("%H:%M:%S") if _state["last_refresh"] else "never"
+    spin = "[yellow]...[/yellow]" if _state["refreshing"] else ""
+    txt = Text.assemble(
+        ("  STOCK TRACKER  ", "bold white on blue"),
+        f"   {now}   Market: ", status,
+        f"   Last update: {last} ", spin
+    )
+    return Panel(txt, style="blue")
+
+
+def _sig_color(sig: Optional[str]) -> str:
+    return {"BULLISH": "green", "BEARISH": "red"}.get(sig or "", "yellow")
+
+
+def _stocks_table() -> Table:
+    table = Table(
+        title="Watchlist by Sector",
+        show_header=True,
+        header_style="bold white on dark_blue",
+        border_style="blue",
+        expand=True,
+    )
+    table.add_column("Symbol", style="bold", width=7)
+    table.add_column("Price", justify="right", width=9)
+    table.add_column("Chg %", justify="right", width=8)
+    table.add_column("Vol", justify="right", width=8)
+    table.add_column("RSI", justify="center", width=6)
+    table.add_column("vs MA50", justify="center", width=8)
+    table.add_column("Signal", justify="center", width=10)
+    table.add_column("Conf", justify="right", width=6)
+    table.add_column("Top Signal", width=26)
+
+    stocks = _state["stocks"]
+    if not stocks:
+        table.add_row("[dim]Loading data...[/dim]", "", "", "", "", "", "", "", "")
+        return table
+
+    # group by sector preserving catalog order
+    grouped: dict[str, list] = {}
+    for s in stocks:
+        sect = s.get("sector") or "General"
+        grouped.setdefault(sect, []).append(s)
+
+    # sort sectors: catalog order first, then alphabetical remainder
+    catalog_order = list(sec_mod.SECTOR_CATALOG.keys())
+    def _sect_key(name):
+        return (catalog_order.index(name) if name in catalog_order else 999, name)
+    sorted_sectors = sorted(grouped.keys(), key=_sect_key)
+
+    for sector in sorted_sectors:
+        color = sec_mod.get_sector_color(sector)
+        # sector header row
+        table.add_row(
+            Text(f"  {sector}", style=f"bold {color}"),
+            "", "", "", "", "", "", "", "",
+            style=f"on grey15",
+        )
+        for s in sorted(grouped[sector], key=lambda x: x["symbol"]):
+            chg = s.get("change_pct") or 0
+            chg_style = "green" if chg >= 0 else "red"
+
+            rsi = s.get("rsi")
+            rsi_str = f"{rsi:.0f}" if rsi else "N/A"
+            rsi_style = "red" if (rsi and rsi >= 70) else ("green" if (rsi and rsi <= 30) else "white")
+
+            price = s.get("price") or 0
+            ma50 = s.get("ma50")
+            if price and ma50:
+                pct_vs = (price - ma50) / ma50 * 100
+                vs_str = f"{pct_vs:+.1f}%"
+                vs_style = "green" if pct_vs >= 0 else "red"
+            else:
+                vs_str, vs_style = "N/A", "white"
+
+            sig = s.get("prediction", "NEUTRAL")
+            conf = s.get("prediction_confidence") or 0
+            sig_icon = {"BULLISH": "^", "BEARISH": "v"}.get(sig, "-")
+
+            rules = s.get("rule_signals") or []
+            top_rule = rules[0][:24] if rules else ""
+
+            vol = s.get("volume") or 0
+            vol_str = f"{vol/1_000_000:.1f}M" if vol >= 1_000_000 else f"{vol/1_000:.0f}K"
+
+            table.add_row(
+                f"  {s['symbol']}",
+                f"${price:.2f}",
+                Text(f"{chg:+.2f}%", style=chg_style),
+                vol_str,
+                Text(rsi_str, style=rsi_style),
+                Text(vs_str, style=vs_style),
+                Text(f"{sig_icon} {sig}", style=_sig_color(sig)),
+                f"{conf*100:.0f}%",
+                top_rule,
+            )
+    return table
+
+
+def _earnings_table() -> Table:
+    table = Table(
+        title="Upcoming Earnings",
+        show_header=True,
+        header_style="bold white on dark_blue",
+        border_style="blue",
+        expand=True,
+    )
+    table.add_column("Symbol", style="bold", width=8)
+    table.add_column("Date", width=12)
+    table.add_column("Days", justify="center", width=6)
+    table.add_column("EPS Est", justify="right", width=9)
+    table.add_column("Avg Reaction", justify="right", width=13)
+
+    for e in _state["earnings"][:8]:
+        days = e.get("days_until", 99)
+        days_style = "red bold" if days <= 3 else ("yellow" if days <= 7 else "white")
+        eps = e.get("eps_estimate")
+        eps_str = f"${eps:.2f}" if eps is not None else "N/A"
+        rxn = e.get("avg_reaction_pct")
+        rxn_str = f"{rxn:+.1f}%" if rxn is not None else "N/A"
+        rxn_style = "green" if (rxn and rxn > 0) else "red" if (rxn and rxn < 0) else "white"
+        table.add_row(
+            e["symbol"],
+            e.get("earnings_date", ""),
+            Text(str(days), style=days_style),
+            eps_str,
+            Text(rxn_str, style=rxn_style),
+        )
+    if not _state["earnings"]:
+        table.add_row("[dim]No upcoming earnings[/dim]", "", "", "", "")
+    return table
+
+
+def _alerts_panel() -> Panel:
+    alerts = _state["alerts"]
+    if not alerts:
+        return Panel("[dim]No alerts yet[/dim]", title="Recent Alerts", border_style="blue")
+
+    lines = []
+    for a in alerts[:6]:
+        sev = a.get("severity", "LOW")
+        color = {"HIGH": "red", "MEDIUM": "yellow", "LOW": "green"}.get(sev, "white")
+        sym = a.get("symbol", "")
+        msg = a.get("message", "")
+        ts = (a.get("created_at") or "")[:16]
+        lines.append(f"[{color}][{sev}][/{color}] [{ts}] [bold]{sym}[/bold] {msg}")
+
+    return Panel("\n".join(lines), title="Recent Alerts", border_style="blue")
+
+
+def _build_layout() -> Layout:
+    layout = Layout()
+    layout.split_column(
+        Layout(name="header", size=3),
+        Layout(name="body"),
+        Layout(name="alerts", size=10),
+    )
+    layout["body"].split_row(
+        Layout(name="stocks", ratio=3),
+        Layout(name="earnings", ratio=2),
+    )
+    return layout
+
+
+# ── CLI commands ──────────────────────────────────────────────────────────────
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(dashboard)
+
+
+@cli.command()
+def dashboard():
+    """Launch the live CLI dashboard."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    layout = _build_layout()
+
+    # Initial data fetch in background
+    threading.Thread(target=refresh_all, args=(config,), daemon=True).start()
+
+    interval = config.get("refresh_interval", 300)
+    last_full_refresh = time.time()
+
+    console.print("[bold blue]Starting Stock Tracker...[/bold blue] Press Ctrl+C to exit.\n")
+    try:
+        with Live(layout, refresh_per_second=2, screen=True) as _:
+            while True:
+                layout["header"].update(_header_panel())
+                layout["body"]["stocks"].update(Panel(_stocks_table(), border_style="blue"))
+                layout["body"]["earnings"].update(Panel(_earnings_table(), border_style="blue"))
+                layout["alerts"].update(_alerts_panel())
+
+                if time.time() - last_full_refresh >= interval and not _state["refreshing"]:
+                    threading.Thread(target=refresh_all, args=(config,), daemon=True).start()
+                    last_full_refresh = time.time()
+
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    console.print("\n[bold]Goodbye![/bold]")
+
+
+@cli.command()
+@click.argument("symbols", nargs=-1, required=True)
+def add(symbols):
+    """Add one or more stock symbols to the watchlist."""
+    config = cfg_mod.load_config()
+    watchlist = config["watchlist"]
+    added = []
+    for sym in [s.upper() for s in symbols]:
+        if sym not in watchlist:
+            watchlist.append(sym)
+            added.append(sym)
+    config["watchlist"] = watchlist
+    cfg_mod.save_config(config)
+    if added:
+        console.print(f"[green]Added:[/green] {', '.join(added)}")
+    else:
+        console.print("[yellow]All symbols already in watchlist.[/yellow]")
+
+
+@cli.command()
+@click.argument("symbols", nargs=-1, required=True)
+def remove(symbols):
+    """Remove one or more stock symbols from the watchlist."""
+    config = cfg_mod.load_config()
+    watchlist = config["watchlist"]
+    removed = []
+    for sym in [s.upper() for s in symbols]:
+        if sym in watchlist:
+            watchlist.remove(sym)
+            removed.append(sym)
+    config["watchlist"] = watchlist
+    cfg_mod.save_config(config)
+    if removed:
+        console.print(f"[red]Removed:[/red] {', '.join(removed)}")
+    else:
+        console.print("[yellow]Symbols not found in watchlist.[/yellow]")
+
+
+@cli.command(name="list")
+def list_watchlist():
+    """List current watchlist."""
+    config = cfg_mod.load_config()
+    watchlist = config["watchlist"]
+    console.print("[bold]Current watchlist:[/bold]")
+    for sym in watchlist:
+        console.print(f"  • {sym}")
+
+
+@cli.command()
+def train():
+    """Train the ML prediction model on historical data."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    watchlist = config["watchlist"]
+    console.print(f"[bold]Fetching historical data for {len(watchlist)} stocks...[/bold]")
+
+    all_hists = {}
+    for sym in watchlist:
+        console.print(f"  Fetching {sym}...", end=" ")
+        hist = fetcher.fetch_history(sym, period="2y")
+        if hist is not None and len(hist) >= 80:
+            all_hists[sym] = hist
+            console.print(f"[green]OK[/green] ({len(hist)} days)")
+        else:
+            n = len(hist) if hist is not None else 0
+            console.print(f"[red]insufficient data ({n} days)[/red]")
+
+    if not all_hists:
+        console.print("[red]No data available for training.[/red]")
+        return
+
+    console.print(f"\n[bold]Training 3-model ensemble on {len(all_hists)} stocks...[/bold]")
+    console.print("[dim]  Models: RandomForest + ExtraTrees + HistGradientBoosting[/dim]")
+    console.print("[dim]  Target: 3-day forward return | 15 technical features[/dim]\n")
+
+    success, feature_importance = pred_mod.train_model(all_hists)
+
+    if success:
+        meta = pred_mod.get_model_metadata()
+        console.print("[green bold]Model trained successfully![/green bold]")
+        console.print(f"  [dim]Samples: {meta.get('n_samples', '?'):,}  |  "
+                      f"Stocks: {meta.get('n_stocks', '?')}  |  "
+                      f"Features: {meta.get('n_features', '?')}[/dim]")
+        console.print(f"  [dim]Model saved to models/stock_model.pkl[/dim]\n")
+
+        if feature_importance:
+            from rich.table import Table as RTable
+            tbl = RTable(title="Feature Importance (RF + ExtraTrees average)",
+                         border_style="blue", header_style="bold white on dark_blue")
+            tbl.add_column("Feature",    style="bold", min_width=22)
+            tbl.add_column("Importance", justify="right", width=12)
+            tbl.add_column("Bar",        width=30)
+
+            max_fi = max(feature_importance.values()) or 1
+            for feat, fi in sorted(feature_importance.items(),
+                                   key=lambda x: x[1], reverse=True):
+                bar_len = int(fi / max_fi * 28)
+                bar     = "[green]" + "#" * bar_len + "[/green]" + "." * (28 - bar_len)
+                tbl.add_row(feat, f"{fi:.4f}", bar)
+            console.print(tbl)
+    else:
+        console.print("[red]Training failed. Check logs.[/red]")
+
+
+@cli.command()
+@click.option("--detail", is_flag=True, help="Show recent individual predictions")
+def accuracy(detail):
+    """Show prediction accuracy statistics tracked over time."""
+    db.init_db()
+    stats = db.get_prediction_accuracy(min_scored=1)
+
+    console.print()
+    console.print("[bold blue]  Prediction Accuracy Report[/bold blue]")
+    console.print("[dim]  Predictions scored 5+ trading days after signal[/dim]\n")
+
+    if stats.get("insufficient_data") or stats.get("total", 0) == 0:
+        console.print(f"[yellow]Not enough scored predictions yet.[/yellow]")
+        console.print(f"  Scored so far: [bold]{stats.get('total', 0)}[/bold]")
+        console.print("[dim]  Run the dashboard or 'report' command daily to accumulate data.[/dim]\n")
+        return
+
+    total   = stats["total"]
+    acc     = stats["accuracy_pct"]
+    correct = stats["correct"]
+    acc_color = "green" if acc >= 55 else ("yellow" if acc >= 50 else "red")
+
+    console.print(f"  Overall accuracy:  [{acc_color}][bold]{acc}%[/bold][/{acc_color}]"
+                  f"  ({correct}/{total} scored predictions)")
+
+    bull_acc = stats.get("bull_accuracy_pct")
+    bear_acc = stats.get("bear_accuracy_pct")
+    if bull_acc is not None:
+        bc = "green" if bull_acc >= 55 else ("yellow" if bull_acc >= 50 else "red")
+        console.print(f"  BULLISH accuracy:  [{bc}]{bull_acc}%[/{bc}]"
+                      f"  ({stats['bull_total']} signals)")
+    if bear_acc is not None:
+        bc = "green" if bear_acc >= 55 else ("yellow" if bear_acc >= 50 else "red")
+        console.print(f"  BEARISH accuracy:  [{bc}]{bear_acc}%[/{bc}]"
+                      f"  ({stats['bear_total']} signals)")
+
+    hi_acc = stats.get("hi_conf_acc_pct")
+    if hi_acc is not None and stats.get("hi_conf_total", 0) >= 3:
+        hc = "green" if hi_acc >= 60 else ("yellow" if hi_acc >= 50 else "red")
+        console.print(f"  High-conf (>=50%): [{hc}]{hi_acc}%[/{hc}]"
+                      f"  ({stats['hi_conf_total']} signals)")
+
+    avg_ret = stats.get("avg_return_pct", 0)
+    ret_color = "green" if avg_ret > 0 else "red"
+    console.print(f"  Avg return (5d):   [{ret_color}]{avg_ret:+.2f}%[/{ret_color}]")
+
+    if detail:
+        rows = db.get_recent_predictions(30)
+        if rows:
+            from rich.table import Table as RTable
+            tbl = RTable(title="Recent Predictions (newest first)",
+                         border_style="blue", header_style="bold white on dark_blue")
+            tbl.add_column("Date",   width=11)
+            tbl.add_column("Symbol", style="bold", width=7)
+            tbl.add_column("Signal", width=9)
+            tbl.add_column("Conf",   justify="right", width=6)
+            tbl.add_column("Entry",  justify="right", width=8)
+            tbl.add_column("Exit",   justify="right", width=8)
+            tbl.add_column("Return", justify="right", width=8)
+            tbl.add_column("Result", justify="center", width=8)
+
+            for r in rows:
+                sig   = r.get("signal", "")
+                sig_c = {"BULLISH": "green", "BEARISH": "red"}.get(sig, "yellow")
+                ret   = r.get("actual_return_pct")
+                ret_s = f"{ret:+.2f}%" if ret is not None else "[dim]pending[/dim]"
+                ret_c = "green" if (ret or 0) > 0 else "red" if (ret or 0) < 0 else "white"
+
+                correct = r.get("was_correct")
+                if correct is None:
+                    res_s = "[dim]--[/dim]"
+                elif correct == 1:
+                    res_s = "[green]CORRECT[/green]"
+                else:
+                    res_s = "[red]WRONG[/red]"
+
+                exit_p = r.get("price_scored")
+                exit_s = f"${exit_p:.2f}" if exit_p else "[dim]--[/dim]"
+
+                tbl.add_row(
+                    (r.get("prediction_date") or "")[:10],
+                    r.get("symbol", ""),
+                    f"[{sig_c}]{sig}[/{sig_c}]",
+                    f"{(r.get('confidence') or 0)*100:.0f}%",
+                    f"${r.get('price_at_prediction') or 0:.2f}",
+                    exit_s,
+                    Text(ret_s, style=ret_c) if ret is not None else "[dim]pending[/dim]",
+                    res_s,
+                )
+            console.print()
+            console.print(tbl)
+
+    console.print()
+    console.print("[dim]  Use --detail to see individual prediction outcomes.[/dim]\n")
+
+
+@cli.command()
+def setup():
+    """Interactive configuration wizard (email, SMS, social media)."""
+    config = cfg_mod.load_config()
+
+    # ── Email ─────────────────────────────────────────────────────────────────
+    console.print("[bold blue]== Email Setup ==[/bold blue]")
+    console.print("[dim]For Gmail, use an App Password (myaccount.google.com > Security > App Passwords)[/dim]\n")
+
+    sender = click.prompt("Sender email", default=config["email"].get("sender") or "")
+    password = click.prompt("App password", hide_input=True, default="")
+    recipient = click.prompt("Recipient email", default=config["email"].get("recipient") or "obiomap@gmail.com")
+
+    config["email"]["sender"] = sender
+    config["email"]["password"] = password
+    config["email"]["recipient"] = recipient
+    config["email"]["enabled"] = bool(sender and password)
+
+    # ── SMS (Twilio) ──────────────────────────────────────────────────────────
+    console.print("\n[bold blue]== SMS Setup (Twilio) ==[/bold blue]")
+    console.print("[dim]Sign up at twilio.com for a free trial (~$15 credit). Leave blank to skip.[/dim]\n")
+
+    twilio_sid   = click.prompt("Twilio Account SID",   default=config["sms"].get("twilio_sid", "") or "", show_default=False)
+    twilio_token = click.prompt("Twilio Auth Token",     default="", hide_input=True, show_default=False)
+    twilio_from  = click.prompt("Twilio From number (+1XXXXXXXXXX)", default=config["sms"].get("twilio_from", "") or "", show_default=False)
+
+    if twilio_sid:
+        config["sms"]["twilio_sid"]   = twilio_sid
+        config["sms"]["twilio_token"] = twilio_token or config["sms"].get("twilio_token", "")
+        config["sms"]["twilio_from"]  = twilio_from
+        config["sms"]["enabled"]      = True
+
+    # ── Twitter/X ─────────────────────────────────────────────────────────────
+    console.print("\n[bold blue]== Twitter/X Setup ==[/bold blue]")
+    console.print("[dim]Create an app at developer.twitter.com. Leave blank to skip.[/dim]\n")
+
+    tw = config.get("social", {}).get("twitter", {})
+    api_key      = click.prompt("API Key (Consumer Key)",    default=tw.get("api_key", "") or "", show_default=False)
+    api_secret   = click.prompt("API Secret",               default="", hide_input=True, show_default=False)
+    access_token = click.prompt("Access Token",             default=tw.get("access_token", "") or "", show_default=False)
+    access_secret= click.prompt("Access Token Secret",      default="", hide_input=True, show_default=False)
+    public_url   = click.prompt("Your public signup URL (e.g. https://your-ip:5443)",
+                                default=config.get("social", {}).get("public_url", "") or "")
+
+    if api_key:
+        config.setdefault("social", {}).setdefault("twitter", {})
+        config["social"]["twitter"]["api_key"]       = api_key
+        config["social"]["twitter"]["api_secret"]    = api_secret or tw.get("api_secret", "")
+        config["social"]["twitter"]["access_token"]  = access_token
+        config["social"]["twitter"]["access_secret"] = access_secret or tw.get("access_secret", "")
+        config["social"]["twitter"]["enabled"]       = True
+    if public_url:
+        config.setdefault("social", {})["public_url"] = public_url
+
+    cfg_mod.save_config(config)
+
+    console.print(f"\n[green]Configuration saved![/green]")
+    console.print(f"  Email alerts -> {recipient}")
+    if twilio_sid:
+        console.print(f"  SMS via Twilio from {twilio_from}")
+    if api_key:
+        console.print(f"  Twitter/X posting enabled")
+    console.print("[dim]Run 'python main.py report' to send a test report.[/dim]")
+
+
+@cli.command()
+def report():
+    """Fetch latest data and send an email report now."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    if not config["email"].get("enabled"):
+        console.print("[yellow]Email not configured. Run 'python main.py setup' first.[/yellow]")
+        return
+
+    console.print("Fetching data...")
+    refresh_all(config)
+
+    stocks = db.get_all_stocks()
+    earnings = db.get_upcoming_earnings()
+    alerts = db.get_recent_alerts(20)
+    html = alert_mod.build_email_report(stocks, earnings, alerts)
+    ok = alert_mod.send_email("Stock Tracker — Manual Report", html, config)
+    if ok:
+        console.print(f"[green]Report sent to {config['email']['recipient']}![/green]")
+    else:
+        console.print("[red]Failed to send email. Check your setup.[/red]")
+
+
+@cli.command()
+def schedule():
+    """Run background monitoring — checks alerts every 5 min, daily email at close."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    console.print("[bold blue]Background scheduler started.[/bold blue] Press Ctrl+C to stop.\n")
+    console.print("  • Alert checks every 5 minutes during market hours")
+    console.print("  • Daily email report at market close (4 PM ET)\n")
+
+    try:
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+    except Exception:
+        et = None
+
+    last_refresh = 0
+    daily_report_sent = False
+
+    while True:
+        now = datetime.now(et) if et else datetime.now()
+        market_open = _is_market_open()
+
+        # Reset daily flag
+        if not market_open and now.hour < 9:
+            daily_report_sent = False
+
+        if market_open and (time.time() - last_refresh) >= 300:
+            console.print(f"[dim]{datetime.now().strftime('%H:%M:%S')} Refreshing...[/dim]")
+            refresh_all(config)
+            last_refresh = time.time()
+
+        # Daily close report
+        if et and hasattr(now, "hour") and now.hour == 16 and now.minute < 10 and not daily_report_sent:
+            if config["email"].get("enabled"):
+                stocks = db.get_all_stocks()
+                earnings = db.get_upcoming_earnings()
+                alerts = db.get_recent_alerts(20)
+                html = alert_mod.build_email_report(stocks, earnings, alerts)
+                ok = alert_mod.send_email("Stock Tracker — Daily Close Report", html, config)
+                if ok:
+                    console.print(f"[green]{datetime.now().strftime('%H:%M')} Daily report sent.[/green]")
+                daily_report_sent = True
+
+        time.sleep(30)
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")
+@click.option("--port", default=5443, show_default=True, help="HTTPS port")
+@click.option("--http-port", default=5080, show_default=True, help="HTTP redirect port (0 to disable)")
+@click.option("--no-tls", is_flag=True, default=False, help="Run plain HTTP (for ngrok / reverse proxy / cloud)")
+def serve(host, port, http_port, no_tls):
+    """Start the subscriber signup web server (HTTPS with auto-generated TLS cert)."""
+    import os as _os
+    import socket as _socket
+    from tracker.web import create_app
+
+    db.init_db()
+    config = cfg_mod.load_config()
+    app = create_app()
+
+    # ── background data refresh (runs on Railway and all serve modes) ─────────
+    def _bg_refresh_loop():
+        refresh_all(config)
+        interval = config.get("refresh_interval", 300)
+        while True:
+            time.sleep(interval)
+            try:
+                refresh_all(config)
+            except Exception:
+                pass
+
+    threading.Thread(target=_bg_refresh_loop, daemon=True).start()
+
+    # ── plain HTTP mode (for ngrok / reverse proxy / cloud) ──────────────────
+    if no_tls:
+        # Railway (and most PaaS) set $PORT; fall back to --http-port or 5080
+        http_only_port = int(_os.environ.get("PORT", http_port if http_port else 5080))
+        try:
+            lan_ip = _socket.gethostbyname(_socket.gethostname())
+        except Exception:
+            lan_ip = "your-ip"
+        console.print(f"[bold green]HTTP server running[/bold green] (plain, for use behind ngrok/proxy)")
+        console.print(f"  Local:   http://localhost:{http_only_port}")
+        console.print(f"  Network: http://{lan_ip}:{http_only_port}")
+        console.print("\n[dim]Press Ctrl+C to stop.[/dim]\n")
+        import logging
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
+        app.run(host=host, port=http_only_port, debug=False, threaded=True)
+        return
+
+    import ssl as _ssl
+    from tracker.ssl_cert import ensure_cert
+
+    # ── generate / reuse TLS cert ─────────────────────────────────────────────
+    console.print("[bold blue]Preparing TLS certificate...[/bold blue]")
+    cert_path, key_path = ensure_cert()
+    console.print(f"  Certificate: [dim]{cert_path}[/dim]")
+
+    ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
+    ssl_ctx.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+
+    # ── HTTP -> HTTPS redirect server (background thread) ────────────────────
+    if http_port:
+        from flask import Flask as _Flask, request as _req, redirect as _redir_fn
+        redirect_app = _Flask("redirect")
+        _https_port = port
+
+        @redirect_app.route("/", defaults={"path": ""})
+        @redirect_app.route("/<path:path>")
+        def _redir(path):
+            host_only = _req.host.split(":")[0]
+            target = f"https://{host_only}:{_https_port}/{path}"
+            if _req.query_string:
+                target += "?" + _req.query_string.decode()
+            return _redir_fn(target, code=301)
+
+        def _run_redirect():
+            import logging
+            log = logging.getLogger("werkzeug")
+            log.setLevel(logging.ERROR)
+            redirect_app.run(host=host, port=http_port, debug=False)
+
+        threading.Thread(target=_run_redirect, daemon=True).start()
+
+    # ── resolve LAN IP for display ────────────────────────────────────────────
+    try:
+        lan_ip = _socket.gethostbyname(_socket.gethostname())
+    except Exception:
+        lan_ip = "your-ip"
+
+    https_local = f"https://localhost:{port}"
+    https_lan = f"https://{lan_ip}:{port}"
+
+    console.print(f"\n[bold green]HTTPS server running[/bold green]")
+    console.print(f"  Local:   {https_local}")
+    console.print(f"  Network: {https_lan}")
+    if http_port:
+        console.print(f"  HTTP redirect: port {http_port} -> {port}")
+    console.print()
+    console.print("[yellow]First-time browser warning:[/yellow] your browser will show a security")
+    console.print("warning because the cert is self-signed. Click 'Advanced' then 'Proceed'.")
+    console.print("[dim]To avoid the warning, install certs/server.crt as a trusted CA on each device.[/dim]")
+    console.print("\n[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    import logging
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.WARNING)
+    app.run(host=host, port=port, ssl_context=ssl_ctx, debug=False, threaded=True)
+
+
+@cli.command(name="subscribers")
+def list_subscribers():
+    """List all active subscribers."""
+    db.init_db()
+    subs = db.get_active_subscribers()
+    if not subs:
+        console.print("[dim]No active subscribers.[/dim]")
+        return
+
+    from rich.table import Table
+    table = Table(title=f"Active Subscribers ({len(subs)})", border_style="blue",
+                  header_style="bold white on dark_blue")
+    table.add_column("Email", style="bold")
+    table.add_column("Stocks")
+    table.add_column("Phone")
+    table.add_column("Carrier")
+    table.add_column("Subscribed")
+    for s in subs:
+        stocks  = ", ".join(s["stocks"]) if s["stocks"] else "[dim]all[/dim]"
+        created = (s.get("created_at") or "")[:10]
+        phone   = s.get("phone_number") or "[dim]-[/dim]"
+        carrier = s.get("carrier") or "[dim]-[/dim]"
+        table.add_row(s["email"], stocks, phone, carrier, created)
+    console.print(table)
+
+
+# ── knowledge base ────────────────────────────────────────────────────────────
+
+def _render_topic(key: str) -> bool:
+    """Render a knowledge base topic to the console. Returns False if not found."""
+    from rich.rule import Rule
+    from rich.markdown import Markdown
+
+    topic = kb_mod.get_topic(key)
+    if not topic:
+        # fuzzy: search for it
+        results = kb_mod.search(key)
+        if results:
+            console.print(f"[yellow]Topic '{key}' not found. Did you mean:[/yellow]")
+            for k, title in results[:5]:
+                console.print(f"  [cyan]{k}[/cyan] — {title}")
+        else:
+            console.print(f"[red]No topic found for '{key}'. Run 'python main.py learn' to see all topics.[/red]")
+        return False
+
+    cat_color = {
+        "Indicators": "bright_cyan", "Patterns": "bright_yellow",
+        "Sectors": "bright_magenta", "Concepts": "bright_white",
+        "Risk Management": "bright_red",
+    }.get(topic["category"], "white")
+
+    console.print()
+    console.print(Rule(f"[bold]{topic['title']}[/bold]", style=cat_color))
+    console.print(f"[{cat_color}]Category:[/{cat_color}] {topic['category']}\n")
+    console.print(f"[bold]Overview[/bold]")
+    console.print(f"  {topic['summary']}\n")
+
+    for section in topic["sections"]:
+        console.print(f"[bold underline]{section['heading']}[/bold underline]")
+        for line in section["content"].split("\n"):
+            console.print(f"  {line}")
+        console.print()
+
+    if topic.get("quick_tips"):
+        console.print("[bold]Quick Tips[/bold]")
+        for tip in topic["quick_tips"]:
+            console.print(f"  [green]+[/green] {tip}")
+        console.print()
+
+    if topic.get("related"):
+        rel = ", ".join(f"[cyan]{r}[/cyan]" for r in topic["related"])
+        console.print(f"[dim]Related topics:[/dim] {rel}")
+    console.print()
+    return True
+
+
+@cli.command()
+@click.argument("topic", required=False, default="")
+@click.option("--list", "list_all", is_flag=True, help="List all topics")
+@click.option("--search", "query", default="", help="Search topics")
+def learn(topic, list_all, query):
+    """Browse the trading knowledge base. Run with no args for the index."""
+    from rich.columns import Columns
+    from rich.panel import Panel as RPanel
+
+    if query:
+        results = kb_mod.search(query)
+        if results:
+            console.print(f"\n[bold]Search results for '{query}':[/bold]\n")
+            for k, title in results:
+                console.print(f"  [cyan]{k:30s}[/cyan]  {title}")
+        else:
+            console.print(f"[yellow]No results for '{query}'.[/yellow]")
+        return
+
+    if topic:
+        _render_topic(topic)
+        return
+
+    # index view
+    by_cat = kb_mod.list_by_category()
+    cat_colors = {
+        "Indicators":      "bright_cyan",
+        "Patterns":        "bright_yellow",
+        "Sectors":         "bright_magenta",
+        "Concepts":        "bright_white",
+        "Risk Management": "bright_red",
+    }
+
+    console.print()
+    console.print("[bold blue]  Trading Knowledge Base[/bold blue]")
+    console.print("[dim]  Run: python main.py learn <topic-key>   e.g. python main.py learn rsi[/dim]\n")
+
+    panels = []
+    for cat in kb_mod.CATEGORIES:
+        entries = by_cat.get(cat, [])
+        color = cat_colors.get(cat, "white")
+        lines = "\n".join(f"  [cyan]{k}[/cyan]" for k, _ in entries)
+        panels.append(RPanel(lines, title=f"[bold {color}]{cat}[/bold {color}]", border_style=color, expand=True))
+
+    console.print(Columns(panels, equal=True))
+    console.print("\n[dim]  Use --search <query> to search, or --list to see all topic keys.[/dim]\n")
+
+
+# ── sector management ─────────────────────────────────────────────────────────
+
+@cli.group()
+def sector():
+    """Manage stock sector assignments."""
+    pass
+
+
+@sector.command(name="list")
+def sector_list():
+    """List all sectors and their assigned stocks."""
+    config = cfg_mod.load_config()
+    stock_sectors = config.get("stock_sectors", {})
+
+    for sect_name, info in sec_mod.SECTOR_CATALOG.items():
+        color = sec_mod.get_sector_color(sect_name)
+        # stocks from catalog + any manually assigned
+        assigned = [s for s, sec in stock_sectors.items() if sec == sect_name]
+        catalog_syms = list(info["stocks"].keys())
+        all_syms = sorted(set(catalog_syms + assigned))
+        in_watchlist = set(config["watchlist"])
+
+        console.print(f"\n[bold {color}]{sect_name}[/bold {color}]")
+        console.print(f"  [dim]{info['description']}[/dim]")
+        for sym in all_syms:
+            tag = "[green] (watching)[/green]" if sym in in_watchlist else "[dim] (not tracking)[/dim]"
+            desc = info["stocks"].get(sym, "")
+            console.print(f"    {sym:6s}{tag}  [dim]{desc}[/dim]")
+
+
+@sector.command(name="load")
+@click.argument("sector_name")
+@click.option("--all", "load_all", is_flag=True, help="Load all stocks from this sector")
+def sector_load(sector_name, load_all):
+    """Add all stocks from a sector to your watchlist.
+
+    SECTOR_NAME can be a partial match (e.g. 'ai', 'quantum', 'etf').
+    """
+    config = cfg_mod.load_config()
+    # fuzzy match
+    matched = None
+    name_lower = sector_name.lower()
+    for k in sec_mod.SECTOR_CATALOG:
+        if name_lower in k.lower():
+            matched = k
+            break
+    if not matched:
+        console.print(f"[red]No sector matching '{sector_name}'. Run 'python main.py sector list' to see sectors.[/red]")
+        return
+
+    info = sec_mod.SECTOR_CATALOG[matched]
+    syms = list(info["stocks"].keys())
+    watchlist = config["watchlist"]
+    stock_sectors = config.get("stock_sectors", {})
+    added = []
+    for sym in syms:
+        if sym not in watchlist:
+            watchlist.append(sym)
+            added.append(sym)
+        stock_sectors[sym] = matched
+
+    config["watchlist"] = watchlist
+    config["stock_sectors"] = stock_sectors
+    cfg_mod.save_config(config)
+
+    color = sec_mod.get_sector_color(matched)
+    console.print(f"\n[bold {color}]{matched}[/bold {color}]")
+    if added:
+        console.print(f"  [green]Added to watchlist:[/green] {', '.join(added)}")
+    console.print(f"  [dim]Already tracking:[/dim] {', '.join(s for s in syms if s not in added)}")
+
+
+@sector.command(name="assign")
+@click.argument("symbol")
+@click.argument("sector_name")
+def sector_assign(symbol, sector_name):
+    """Assign a stock to a specific sector.
+
+    Example: python main.py sector assign IONQ 'Quantum Computing'
+    """
+    config = cfg_mod.load_config()
+    matched = None
+    for k in sec_mod.SECTOR_CATALOG:
+        if sector_name.lower() in k.lower():
+            matched = k
+            break
+    if not matched:
+        matched = sector_name  # allow custom sector names
+
+    stock_sectors = config.get("stock_sectors", {})
+    stock_sectors[symbol.upper()] = matched
+    config["stock_sectors"] = stock_sectors
+    cfg_mod.save_config(config)
+    console.print(f"[green]{symbol.upper()}[/green] assigned to [bold]{matched}[/bold]")
+
+
+# ── social media ─────────────────────────────────────────────────────────────
+
+@cli.group()
+def social():
+    """Social media posting commands."""
+    pass
+
+
+@social.command(name="preview")
+def social_preview():
+    """Preview the market-update post that would be sent to Twitter."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    stocks = db.get_all_stocks()
+    if not stocks:
+        console.print("[yellow]No stock data yet. Run the dashboard first to populate data.[/yellow]")
+        return
+    public_url = config.get("social", {}).get("public_url", "")
+    text = social_mod.generate_market_post(stocks, public_url)
+    console.print(f"\n[bold]Market update post ({len(text)}/280 chars):[/bold]\n")
+    console.print(text)
+    console.print()
+
+
+@social.command(name="post")
+def social_post():
+    """Post a market update to Twitter/X now."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    stocks = db.get_all_stocks()
+    if not stocks:
+        console.print("[yellow]No stock data yet. Run the dashboard first.[/yellow]")
+        return
+    ok = social_mod.post_market_update(stocks, config)
+    if ok:
+        console.print("[green]Market update posted to Twitter![/green]")
+    else:
+        console.print("[red]Failed to post. Check Twitter credentials in 'python main.py setup'.[/red]")
+
+
+@social.command(name="cta")
+def social_cta():
+    """Post a subscribe call-to-action tweet."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    public_url = config.get("social", {}).get("public_url", "")
+    if not public_url:
+        console.print("[red]Set your public URL first: run 'python main.py setup'.[/red]")
+        return
+    watchlist = config.get("watchlist", [])
+    text = social_mod.generate_subscribe_post(public_url, watchlist)
+    console.print(f"\n[bold]CTA post preview ({len(text)}/280 chars):[/bold]\n")
+    console.print(text)
+    console.print()
+    ok = social_mod.post_to_twitter(text, config)
+    if ok:
+        console.print("[green]CTA posted to Twitter![/green]")
+    else:
+        console.print("[yellow]Twitter not configured -- post text printed above for manual sharing.[/yellow]")
+
+
+@social.command(name="schedule-posts")
+@click.option("--interval", default=4, show_default=True, help="Hours between market-update posts")
+def social_schedule(interval):
+    """Continuously post market updates to Twitter at a set interval."""
+    db.init_db()
+    config = cfg_mod.load_config()
+    console.print(f"[bold blue]Social scheduler started[/bold blue] -- posting every {interval}h. Ctrl+C to stop.\n")
+    while True:
+        stocks = db.get_all_stocks()
+        if stocks:
+            ok = social_mod.post_market_update(stocks, config)
+            status = "[green]posted[/green]" if ok else "[yellow]skipped (no credentials)[/yellow]"
+            console.print(f"[dim]{datetime.now().strftime('%H:%M')}[/dim] Twitter post {status}")
+        time.sleep(interval * 3600)
+
+
+if __name__ == "__main__":
+    cli()

@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Secrets / local config (contains email passwords, API keys)
+config.json
+
+# Database (runtime data)
+stocks.db
+
+# TLS certs (auto-generated)
+certs/
+
+# Logs
+*.log
+*.out.txt
+*.err.txt
+cf.stdout.log
+cf.stderr.log
+serve_err.txt
+serve_out.txt
+
+# Cloudflare tunnel binary
+cloudflared.exe
+tunnel.py
+
+# Claude IDE files
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
