@@ -38,18 +38,18 @@ DEFAULT_CONFIG = {
         "PLTR", "IONQ", "RGTI", "QUBT", "QBTS", "SHOP",
         # Penny stocks with potential
         "SNDL", "ACB", "CRON",          # Cannabis
-        "OCGN", "ATOS", "GTHX",         # Biotech
-        "WKHS", "NKLA", "GOEV",         # EV / clean transport
-        "CLOV", "SPCE", "MMAT",         # Speculative tech
-        "BBAI", "CLSK", "VERB",         # AI / small-cap tech
+        "OCGN", "ATOS", "BNGO",         # Biotech
+        "WKHS", "LCID", "NIO",          # EV / clean transport
+        "CLOV", "SPCE", "MVIS",         # Speculative tech
+        "BBAI", "SOUN", "KULR",         # AI / small-cap tech
     ],
     "stock_sectors": {
         # Penny stocks sector mapping
         "SNDL": "Penny Stocks", "ACB": "Penny Stocks", "CRON": "Penny Stocks",
-        "OCGN": "Penny Stocks", "ATOS": "Penny Stocks", "GTHX": "Penny Stocks",
-        "WKHS": "Penny Stocks", "NKLA": "Penny Stocks", "GOEV": "Penny Stocks",
-        "CLOV": "Penny Stocks", "SPCE": "Penny Stocks", "MMAT": "Penny Stocks",
-        "BBAI": "Penny Stocks", "CLSK": "Penny Stocks", "VERB": "Penny Stocks",
+        "OCGN": "Penny Stocks", "ATOS": "Penny Stocks", "BNGO": "Penny Stocks",
+        "WKHS": "Penny Stocks", "LCID": "Penny Stocks", "NIO":  "Penny Stocks",
+        "CLOV": "Penny Stocks", "SPCE": "Penny Stocks", "MVIS": "Penny Stocks",
+        "BBAI": "Penny Stocks", "SOUN": "Penny Stocks", "KULR": "Penny Stocks",
     },
     "industry_etfs": {
         "Technology": "XLK",
