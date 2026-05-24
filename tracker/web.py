@@ -645,6 +645,24 @@ def create_app() -> Flask:
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
         return response
 
+    # ── status / debug ────────────────────────────────────────────────────────
+
+    @_app.route("/status")
+    def status():
+        import json as _json
+        stocks = db.get_all_stocks()
+        penny = [s for s in stocks if (s.get("price") or 0) < 10 and not sec_mod.is_crypto(s["symbol"])]
+        return Response(
+            _json.dumps({
+                "db_path": str(db.DB_PATH),
+                "total_stocks": len(stocks),
+                "penny_stocks": len(penny),
+                "penny_symbols": [s["symbol"] for s in penny],
+                "sample": [{k: s[k] for k in ("symbol","price","rsi","prediction") if k in s} for s in penny[:5]],
+            }, indent=2),
+            mimetype="application/json"
+        )
+
     # ── main index ────────────────────────────────────────────────────────────
 
     @_app.route("/")
