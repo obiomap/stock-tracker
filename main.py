@@ -149,7 +149,7 @@ def _refresh_options(stocks: list[dict]) -> None:
     Only runs for BULLISH/BEARISH signals with confidence >= 50%
     on optionable (non-crypto, price >= $5) symbols.
     """
-    MIN_CONF = 0.50   # lowered from 0.55 so rule-based signals qualify too
+    MIN_CONF = 0.30   # works with rule-based signals; ML model raises this naturally
 
     all_signals = [s for s in stocks if s.get("prediction") in ("BULLISH", "BEARISH")]
     candidates  = [
