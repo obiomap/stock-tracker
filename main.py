@@ -79,6 +79,7 @@ def refresh_all(config: dict) -> None:
                 continue
             hist = fetcher.fetch_history(sym, period="2y")
             if hist is None or len(hist) < 30:
+                print(f"[refresh] {sym}: skipped — hist={'None' if hist is None else len(hist)} rows")
                 continue
             hist_data[sym] = snap
             hist_data[sym]["hist"] = hist
