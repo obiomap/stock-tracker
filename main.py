@@ -63,7 +63,9 @@ def refresh_all(config: dict) -> None:
         return
     _state["refreshing"] = True
     try:
-        watchlist = config["watchlist"]
+        import random as _random
+        watchlist = list(config["watchlist"])
+        _random.shuffle(watchlist)   # rotate order each refresh so no stock is always last
         snaps = fetcher.fetch_multiple_snapshots(watchlist)
 
         stocks_out = []
