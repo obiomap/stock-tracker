@@ -1541,25 +1541,45 @@ def create_app() -> Flask:
   <!-- SUBSCRIBE CARD -->
   <div class="subscribe-card" id="subscribe">
     <h2>&#x1F514; Start receiving alerts</h2>
-    <p class="subtitle">Choose your stocks &amp; cryptos. Get signals via email (and optionally SMS).</p>
+    <p class="subtitle">Enter your email, phone, or both &mdash; alerts will be sent to whichever you provide.</p>
 
-    <form method="POST" action="/subscribe">
+    <form method="POST" action="/subscribe" id="sub-form">
       <div class="form-row">
         <div class="field">
-          <label>Your email address</label>
-          <input type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+          <label>Email address <span class="optional" id="email-opt-label">(optional if you enter a phone)</span></label>
+          <input type="email" name="email" id="sub-email" placeholder="you@example.com" autocomplete="email">
         </div>
         <div>
           <div class="field">
-            <label>Phone number <span class="optional">(optional &mdash; for SMS alerts)</span></label>
+            <label>Phone number <span class="optional" id="phone-opt-label">(optional if you enter an email)</span></label>
             <div class="phone-row">
-              <input type="tel" name="phone_number" placeholder="+1 555 123 4567" autocomplete="tel">
+              <input type="tel" name="phone_number" id="sub-phone" placeholder="+1 555 123 4567" autocomplete="tel">
               {'<div>' + carrier_select + '</div>' if carrier_select else ''}
             </div>
           </div>
           {'<p class="sms-note">&#x2139;&#xFE0F; No Twilio configured &mdash; select your carrier to receive SMS via email gateway.</p>' if not twilio_on else '<p class="sms-note">&#x2705; Twilio configured &mdash; enter any number to receive SMS alerts.</p>'}
         </div>
       </div>
+      <script>
+      (function(){{
+        var form  = document.getElementById('sub-form');
+        var email = document.getElementById('sub-email');
+        var phone = document.getElementById('sub-phone');
+        var eOpt  = document.getElementById('email-opt-label');
+        var pOpt  = document.getElementById('phone-opt-label');
+        function update(){{
+          var hasEmail = email.value.trim() !== '';
+          var hasPhone = phone.value.trim() !== '';
+          email.required = !hasPhone;
+          phone.required = !hasEmail;
+          eOpt.style.display = hasPhone ? 'inline' : 'none';
+          pOpt.style.display = hasEmail ? 'inline' : 'none';
+        }}
+        email.addEventListener('input', update);
+        phone.addEventListener('input', update);
+        update();
+      }})();
+      </script>
 
       <div class="stock-picker">
         <div class="stock-picker-label">&#x2713; Stocks &amp; cryptos to track (all pre-selected)</div>
@@ -1842,26 +1862,45 @@ function optSwitch(tab) {{
 
     @_app.route("/subscribe", methods=["POST"])
     def subscribe():
-        email = (request.form.get("email") or "").strip().lower()
-        if not email or "@" not in email:
-            return _simple_error("Invalid email address.")
+        import re as _re
+        email   = (request.form.get("email") or "").strip().lower()
+        phone   = (request.form.get("phone_number") or "").strip()
+        carrier = (request.form.get("carrier") or "").strip()
 
-        selected = request.form.getlist("stocks")
+        valid_email = bool(email and "@" in email and "." in email.split("@")[-1])
+        valid_phone = bool(phone and _re.sub(r"\D", "", phone))
+
+        if not valid_email and not valid_phone:
+            return _simple_error("Please enter an email address, a phone number, or both.")
+
+        # Phone-only subscribers get a synthetic placeholder so the DB UNIQUE
+        # constraint is satisfied without sending them unwanted email.
+        clean_phone = _re.sub(r"\D", "", phone)
+        if not valid_email:
+            email = f"sms+{clean_phone}@noemail.invalid"
+
+        selected  = request.form.getlist("stocks")
         watchlist = _watchlist()
         if "__ALL__" in selected or not selected:
             stocks = []
         else:
             stocks = [s for s in selected if s in watchlist]
 
-        phone   = (request.form.get("phone_number") or "").strip()
-        carrier = (request.form.get("carrier") or "").strip()
-
-        token    = db.add_subscriber(email, stocks, phone_number=phone, carrier=carrier)
-        unsub    = f"{_base_url()}/unsubscribe?token={token}"
+        token     = db.add_subscriber(email, stocks, phone_number=phone, carrier=carrier)
+        unsub     = f"{_base_url()}/unsubscribe?token={token}"
         stock_str = ", ".join(sec_mod.display_symbol(s) for s in stocks) if stocks else "all stocks"
-        sms_note = f"<p>SMS alerts will be sent to <strong>{phone}</strong>.</p>" if phone else ""
 
-        config = cfg_mod.load_config()
+        # Build channel confirmation lines
+        sms_only = email.endswith("@noemail.invalid")
+        if sms_only:
+            contact_line = f"<p>&#x1F4F1; SMS alerts will be sent to <strong>{phone}</strong>.</p>"
+        elif phone:
+            contact_line = (f"<p>&#x2709;&#xFE0F; Email alerts → <strong>{email}</strong></p>"
+                            f"<p>&#x1F4F1; SMS alerts → <strong>{phone}</strong></p>")
+        else:
+            contact_line = f"<p>&#x2709;&#xFE0F; Email alerts will be sent to <strong>{email}</strong>.</p>"
+
+        config  = cfg_mod.load_config()
         pub_url = config.get("social", {}).get("public_url", _base_url())
         tw_url  = social_mod.twitter_intent_url(
             f"Just subscribed to free AI stock alerts! Check it out:", pub_url)
@@ -1871,8 +1910,8 @@ function optSwitch(tab) {{
   <div class="page-card">
     <div class="icon">&#x2705;</div>
     <h2 style="color:#16a34a">You&rsquo;re subscribed!</h2>
-    <p><strong>{email}</strong> will now receive alerts for <strong>{stock_str}</strong>.</p>
-    {sms_note}
+    {contact_line}
+    <p style="margin-top:8px">Tracking: <strong>{stock_str}</strong></p>
     <p style="margin-top:16px;font-size:13px;color:var(--muted)">
       Unsubscribe anytime:<br>
       <a href="{unsub}" style="word-break:break-all;font-size:12px">{unsub}</a>

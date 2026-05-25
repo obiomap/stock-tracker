@@ -173,7 +173,7 @@ def notify_subscribers(
 
             # ── Email channel ──────────────────────────────────────────────
             email = (sub.get("email") or "").strip()
-            if email:
+            if email and not email.endswith("@noemail.invalid"):
                 sent_email = False
                 if _can_send_resend(config):
                     sent_email = _send_via_resend(subject, html_body, email, config)
