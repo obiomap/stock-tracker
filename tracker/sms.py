@@ -22,9 +22,19 @@ CARRIER_GATEWAYS: dict[str, str] = {
 }
 
 
-def _twilio_ready(config: dict) -> bool:
+def _twilio_creds(config: dict) -> tuple[str, str, str]:
+    """Return (sid, token, from_number) preferring env vars over config file."""
+    import os
     s = config.get("sms", {})
-    return bool(s.get("twilio_sid") and s.get("twilio_token") and s.get("twilio_from"))
+    sid   = os.environ.get("TWILIO_ACCOUNT_SID")  or s.get("twilio_sid",   "")
+    token = os.environ.get("TWILIO_AUTH_TOKEN")   or s.get("twilio_token", "")
+    from_ = os.environ.get("TWILIO_FROM_NUMBER")  or s.get("twilio_from",  "")
+    return sid, token, from_
+
+
+def _twilio_ready(config: dict) -> bool:
+    sid, token, from_ = _twilio_creds(config)
+    return bool(sid and token and from_)
 
 
 def _clean_phone(phone: str) -> str:
@@ -47,14 +57,16 @@ def send_sms(to_number: str, carrier: str, message: str, config: dict) -> bool:
 def _send_twilio(to_number: str, message: str, config: dict) -> bool:
     try:
         from twilio.rest import Client
-        s = config["sms"]
-        client = Client(s["twilio_sid"], s["twilio_token"])
+        sid, token, from_ = _twilio_creds(config)
+        client = Client(sid, token)
         clean = _clean_phone(to_number)
         e164 = f"+1{clean}" if not to_number.strip().startswith("+") else to_number.strip()
-        client.messages.create(body=message[:160], from_=s["twilio_from"], to=e164)
+        print(f"[SMS/Twilio] sending to {e164} from {from_}")
+        client.messages.create(body=message[:160], from_=from_, to=e164)
+        print(f"[SMS/Twilio] sent OK → {e164}")
         return True
     except Exception as e:
-        print(f"[SMS/Twilio] {e}")
+        print(f"[SMS/Twilio] error: {e}")
         return False
 
 
