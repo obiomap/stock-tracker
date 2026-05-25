@@ -61,7 +61,14 @@ def _send_twilio(to_number: str, message: str, config: dict) -> bool:
 def _send_gateway(phone: str, carrier: str, message: str, config: dict) -> bool:
     """Send via email-to-SMS gateway — requires email to be configured."""
     from . import alerts as alert_mod
+    # Exact match first; fall back to case-insensitive search
     gateway = CARRIER_GATEWAYS.get(carrier, "")
+    if not gateway:
+        carrier_lower = carrier.lower().replace("-", "").replace(" ", "")
+        for k, v in CARRIER_GATEWAYS.items():
+            if k.lower().replace("-", "").replace(" ", "") == carrier_lower:
+                gateway = v
+                break
     if not gateway:
         return False
     clean = _clean_phone(phone)
