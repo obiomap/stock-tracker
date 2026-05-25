@@ -99,6 +99,12 @@ DEFAULT_CONFIG = {
         "ICLN", "LIT", "DRIV",                              # Clean energy, Lithium/Battery, EV/Auto
         "SKYY", "CLOU", "AIQ",                              # Cloud computing, AI & Tech ETFs
         "JETS", "XBI", "HACK",                              # Airlines, Biotech, Cybersecurity ETFs
+        # US Large Cap additions
+        "SNAP", "F", "GM", "CSCO", "IBM",                  # Social media, Auto, Networking, Enterprise tech
+        "DELL", "ZM", "PINS", "LYFT", "ETSY",              # PC/Cloud, Videoconf, Social, Rideshare, eCommerce
+        # Dividend & Value
+        "MO", "T", "VZ", "PEP", "MMM",                     # Tobacco, Telecom, Telecom, Beverages, Industrials
+        "D", "SO", "DUK", "CL", "MDLZ",                    # Utilities, Utilities, Utilities, Consumer staples
     ],
     "stock_sectors": {
         # Cybersecurity
@@ -203,6 +209,17 @@ DEFAULT_CONFIG = {
         "ICLN":  "ETFs", "LIT":   "ETFs", "DRIV":  "ETFs",
         "SKYY":  "ETFs", "CLOU":  "ETFs", "AIQ":   "ETFs",
         "JETS":  "ETFs", "XBI":   "ETFs", "HACK":  "ETFs",
+        # US Large Cap additions
+        "SNAP":  "Technology", "F":    "Consumer", "GM":   "Consumer",
+        "CSCO":  "Technology", "IBM":  "Technology",
+        "DELL":  "Technology", "ZM":   "Technology", "PINS": "Technology",
+        "LYFT":  "Consumer",   "ETSY": "Consumer",
+        # Dividend & Value
+        "MO":    "Dividend & Value", "T":    "Dividend & Value",
+        "VZ":    "Dividend & Value", "PEP":  "Dividend & Value",
+        "MMM":   "Dividend & Value", "D":    "Dividend & Value",
+        "SO":    "Dividend & Value", "DUK":  "Dividend & Value",
+        "CL":    "Dividend & Value", "MDLZ": "Dividend & Value",
     },
     "industry_etfs": {
         "Technology": "XLK",

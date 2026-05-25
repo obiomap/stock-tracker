@@ -24,6 +24,7 @@ SECTOR_COLORS: dict[str, str] = {
     "Latin America":          "chartreuse3",
     "Nigerian Exchange (NGX)":"green3",
     "African Markets":        "dark_orange",
+    "Dividend & Value":       "wheat1",
     "General":                "white",
 }
 
