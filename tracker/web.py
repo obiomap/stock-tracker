@@ -1023,7 +1023,7 @@ def create_app() -> Flask:
                 for s in sorted(syms)
             )
             sector_html += f"""
-            <div class="sector-group open">
+            <div class="sector-group">
               <div class="sector-toggle">
                 <span class="sector-name" style="color:{color}">{sect}</span>
                 <span class="sector-count">({len(syms)})</span>
