@@ -193,7 +193,7 @@ def get_recommendations(
     """
     if not is_optionable(symbol, price):
         return []
-    if confidence < 0.55 or prediction not in ("BULLISH", "BEARISH"):
+    if confidence < 0.30 or prediction not in ("BULLISH", "BEARISH"):
         return []
 
     chain = fetch_option_chain(symbol)

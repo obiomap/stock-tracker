@@ -178,6 +178,8 @@ def _refresh_options(stocks: list[dict]) -> None:
             )
             if recs:
                 print(f"[options] {s['symbol']} → {len(recs)} {s['prediction']} recs (score {recs[0]['score']:.0f})")
+            else:
+                print(f"[options] {s['symbol']} conf={s.get('prediction_confidence',0):.2f} {s.get('prediction')} → no recs")
             all_recs.extend(recs)
         except Exception as e:
             print(f"[options] {s['symbol']} error: {e}")
