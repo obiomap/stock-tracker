@@ -57,7 +57,7 @@ DEFAULT_CONFIG = {
         # Cybersecurity
         "CRWD", "PANW", "NET", "ZS", "OKTA", "FTNT", "S",
         # Fintech
-        "PYPL", "SQ", "COIN", "HOOD", "SOFI", "AFRM",
+        "PYPL", "COIN", "HOOD", "SOFI", "AFRM",
         # Commodities & Bonds ETFs
         "GLD", "SLV", "GDX", "USO", "TLT", "DIA",
         # Consumer & Entertainment additions
@@ -77,7 +77,7 @@ DEFAULT_CONFIG = {
         # Asian Markets
         "TM", "SONY", "NTDOY", "HMC", "MUFG",          # Japan
         "BABA", "BIDU", "JD", "PDD", "TCEHY", "BYDDY", # China
-        "INFY", "HDB", "IBN", "TTM", "WIT",             # India
+        "INFY", "HDB", "IBN", "WIT",                    # India
         "SE", "GRAB",                                    # Southeast Asia
         "EWJ", "MCHI", "INDA", "EWY", "FXI",            # Asian ETFs
         "KWEB", "EWT", "EWA",                            # More Asian/Pacific ETFs
@@ -137,7 +137,7 @@ DEFAULT_CONFIG = {
         "ZS":   "Cybersecurity", "OKTA": "Cybersecurity", "FTNT": "Cybersecurity",
         "S":    "Cybersecurity",
         # Fintech
-        "PYPL": "Fintech", "SQ":   "Fintech", "COIN": "Fintech",
+        "PYPL": "Fintech", "COIN": "Fintech",
         "HOOD": "Fintech", "SOFI": "Fintech", "AFRM": "Fintech",
         # Commodities & Bonds
         "GLD": "Commodities & Bonds", "SLV": "Commodities & Bonds",
@@ -213,7 +213,7 @@ DEFAULT_CONFIG = {
         "BABA": "Asian Markets", "BIDU": "Asian Markets", "JD": "Asian Markets",
         "PDD": "Asian Markets", "TCEHY": "Asian Markets", "BYDDY": "Asian Markets",
         "INFY": "Asian Markets", "HDB": "Asian Markets", "IBN": "Asian Markets",
-        "TTM": "Asian Markets", "WIT": "Asian Markets",
+        "WIT": "Asian Markets",
         "EWJ": "Asian Markets", "MCHI": "Asian Markets", "INDA": "Asian Markets",
         "EWY": "Asian Markets", "FXI": "Asian Markets",
         # European Markets

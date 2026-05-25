@@ -274,7 +274,6 @@ SECTOR_CATALOG: dict[str, dict] = {
         ],
         "stocks": {
             "PYPL": "PayPal — digital wallet and online payment network",
-            "SQ":   "Block (formerly Square) — merchant payments + Cash App + Bitcoin",
             "COIN": "Coinbase — largest US crypto exchange and custodian",
             "HOOD": "Robinhood — commission-free stock and crypto trading app",
             "SOFI": "SoFi Technologies — neobank: student loans, mortgages, investing",
