@@ -74,43 +74,46 @@ def refresh_all(config: dict) -> None:
         earnings_map = {e["symbol"]: e["days_until"] for e in _state["earnings"]}
 
         for sym in watchlist:
-            snap = snaps.get(sym)
-            if not snap:
-                continue
-            hist = fetcher.fetch_history(sym, period="2y")
-            if hist is None or len(hist) < 30:
-                print(f"[refresh] {sym}: skipped — hist={'None' if hist is None else len(hist)} rows")
-                continue
-            hist_data[sym] = snap
-            hist_data[sym]["hist"] = hist
+            try:
+                snap = snaps.get(sym)
+                if not snap:
+                    continue
+                hist = fetcher.fetch_history(sym, period="2y")
+                if hist is None or len(hist) < 30:
+                    print(f"[refresh] {sym}: skipped — hist={'None' if hist is None else len(hist)} rows")
+                    continue
+                hist_data[sym] = snap
+                hist_data[sym]["hist"] = hist
 
-            ind_data = ind.get_latest_indicators(hist)
-            days_to_earn = earnings_map.get(sym)
-            prediction = pred_mod.generate_prediction(sym, ind_data, snap, days_to_earn)
-            predictions_out[sym] = prediction
+                ind_data = ind.get_latest_indicators(hist)
+                days_to_earn = earnings_map.get(sym)
+                prediction = pred_mod.generate_prediction(sym, ind_data, snap, days_to_earn)
+                predictions_out[sym] = prediction
 
-            sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
-            stock_row = {
-                "symbol": sym,
-                "price": snap["price"],
-                "prev_close": snap["prev_close"],
-                "change_pct": snap["change_pct"],
-                "volume": snap["volume"],
-                "avg_volume": snap["avg_volume"],
-                "rsi": ind_data["rsi"],
-                "macd": ind_data["macd"],
-                "macd_signal": ind_data["macd_signal"],
-                "bb_pband": ind_data["bb_pband"],
-                "ma20": ind_data["ma20"],
-                "ma50": ind_data["ma50"],
-                "ma200": ind_data["ma200"],
-                "prediction": prediction["signal"],
-                "prediction_confidence": prediction["confidence"],
-                "rule_signals": [s["name"] for s in prediction["rule_signals"]],
-                "sector": sector,
-            }
-            db.upsert_stock(stock_row)
-            stocks_out.append(stock_row)
+                sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
+                stock_row = {
+                    "symbol": sym,
+                    "price": snap["price"],
+                    "prev_close": snap["prev_close"],
+                    "change_pct": snap["change_pct"],
+                    "volume": snap["volume"],
+                    "avg_volume": snap["avg_volume"],
+                    "rsi": ind_data["rsi"],
+                    "macd": ind_data["macd"],
+                    "macd_signal": ind_data["macd_signal"],
+                    "bb_pband": ind_data["bb_pband"],
+                    "ma20": ind_data["ma20"],
+                    "ma50": ind_data["ma50"],
+                    "ma200": ind_data["ma200"],
+                    "prediction": prediction["signal"],
+                    "prediction_confidence": prediction["confidence"],
+                    "rule_signals": [s["name"] for s in prediction["rule_signals"]],
+                    "sector": sector,
+                }
+                db.upsert_stock(stock_row)
+                stocks_out.append(stock_row)
+            except Exception as _e:
+                print(f"[refresh] {sym}: exception — {_e}")
 
         earnings_list = earn_mod.refresh_earnings_calendar(watchlist, hist_data)
         new_alerts = alert_mod.check_and_fire_alerts(stocks_out, earnings_list, predictions_out, config)
