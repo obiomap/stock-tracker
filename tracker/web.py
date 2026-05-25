@@ -771,6 +771,111 @@ def create_app() -> Flask:
             "options_recs": opt_recs[:10],
         }, indent=2), mimetype="application/json")
 
+    @_app.route("/option-chart.png")
+    def option_chart_png():
+        """
+        Generate a payoff-at-expiry PNG chart for one option contract.
+        Query params: t=CALL|PUT  k=strike  p=current_price  b=bid  a=ask
+        Example: /option-chart.png?t=CALL&k=155&p=154.92&b=3.75&a=4.00
+        """
+        import io
+        import matplotlib
+        matplotlib.use("Agg")          # non-interactive, thread-safe
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        import numpy as np
+
+        opt_type = request.args.get("t", "CALL").upper()
+        try:
+            strike  = float(request.args.get("k", 100))
+            price   = float(request.args.get("p", 100))
+            bid     = float(request.args.get("b", 1))
+            ask     = float(request.args.get("a", 1))
+        except (ValueError, TypeError):
+            return Response("bad params", status=400)
+
+        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else max(bid, ask, 0.01)
+        be  = strike + mid if opt_type == "CALL" else strike - mid
+
+        # X-axis range
+        x0 = min(strike * 0.84, be * 0.97, price * 0.93)
+        x1 = max(strike * 1.16, be * 1.03, price * 1.07)
+        pad = (x1 - x0) * 0.05
+        x0 -= pad;  x1 += pad
+        xs = np.linspace(x0, x1, 300)
+
+        if opt_type == "CALL":
+            ys = np.maximum(xs - strike, 0) - mid
+        else:
+            ys = np.maximum(strike - xs, 0) - mid
+
+        # ── Figure ────────────────────────────────────────────────────────────
+        fig, ax = plt.subplots(figsize=(5.2, 1.35), dpi=110)
+        fig.patch.set_facecolor("#0f172a")
+        ax.set_facecolor("#0f172a")
+
+        # Fill zones
+        ax.fill_between(xs, ys, 0, where=(ys >= 0),
+                        color="#22c55e", alpha=0.18, linewidth=0)
+        ax.fill_between(xs, ys, 0, where=(ys < 0),
+                        color="#ef4444", alpha=0.13, linewidth=0)
+
+        # Payoff curve
+        col = "#16a34a" if opt_type == "CALL" else "#dc2626"
+        ax.plot(xs, ys, color=col, linewidth=2, zorder=5)
+
+        # Zero line
+        ax.axhline(0, color="#334155", linewidth=0.8, zorder=2)
+
+        # Vertical reference lines
+        ax.axvline(strike, color="#f59e0b", linewidth=1.2,
+                   linestyle="--", zorder=4, label=f"K ${strike:.0f}")
+        ax.axvline(price,  color="#e2e8f0", linewidth=0.9,
+                   linestyle=(0, (3, 5)), zorder=4, alpha=0.8,
+                   label=f"Now ${price:.2f}")
+        ax.axvline(be,     color=col,       linewidth=0.9,
+                   linestyle=":",  zorder=4, alpha=0.65,
+                   label=f"BE ${be:.2f}")
+
+        # Axes styling
+        for spine in ax.spines.values():
+            spine.set_color("#334155")
+        ax.tick_params(colors="#64748b", labelsize=7)
+        ax.yaxis.set_tick_params(labelsize=7)
+
+        # Y ticks: max loss, zero, one profit level
+        y_ticks = [-mid, 0, mid * 2]
+        y_labels = [f"-${mid:.2f}", "$0", f"+${mid*2:.2f}"]
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_labels, color="#64748b", fontsize=7)
+
+        # X ticks: strike and current price
+        x_tick_vals  = [strike]
+        x_tick_lbls  = [f"K${strike:.0f}"]
+        if abs(price - strike) / strike > 0.015:
+            x_tick_vals.append(price)
+            x_tick_lbls.append(f"${price:.2f}")
+        ax.set_xticks(x_tick_vals)
+        ax.set_xticklabels(x_tick_lbls, color="#94a3b8", fontsize=7)
+
+        # Legend — compact, top corner
+        leg = ax.legend(fontsize=7, loc="upper left" if opt_type == "CALL" else "upper right",
+                        facecolor="#1e293b", edgecolor="#334155",
+                        labelcolor="#94a3b8", framealpha=0.9,
+                        handlelength=1.4, borderpad=0.5, labelspacing=0.3)
+
+        ax.set_xlim(x0, x1)
+        plt.tight_layout(pad=0.3)
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        buf.seek(0)
+
+        resp = Response(buf.read(), mimetype="image/png")
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
+
     @_app.route("/test-options-email")
     def test_options_email():
         """Force-send a test options alert email using current DB recs. Admin use only."""

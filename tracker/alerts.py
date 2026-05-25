@@ -402,24 +402,27 @@ def build_options_email(new_recs: list[dict]) -> str:
             f'</tr>'
         )
 
-        svg = _payoff_svg(
-            opt_t,
-            float(r.get("strike", 0)),
-            float(r.get("current_price", 0)),
-            float(r.get("bid", 0)),
-            float(r.get("ask", 0)),
+        # Chart: served as PNG from the app (Gmail-compatible)
+        k  = r.get("strike", 0)
+        p  = r.get("current_price", 0)
+        b  = r.get("bid", 0)
+        a  = r.get("ask", 0)
+        chart_url = (
+            f"https://jpstocktracker.pro/option-chart.png"
+            f"?t={opt_t}&k={k}&p={p}&b={b}&a={a}"
         )
         chart_row = (
             f'<tr style="background:#111827;border-bottom:2px solid #1e293b">'
             f'<td colspan="{NCOLS}" style="padding:10px 16px 12px">'
             f'<div style="font-size:10px;color:#64748b;margin-bottom:4px">'
             f'Payoff at expiry &mdash; '
-            f'<span style="color:#f59e0b">&#x2015;&#x2015; strike</span> &nbsp; '
+            f'<span style="color:#f59e0b">&#x2015;&#x2015; strike (K)</span> &nbsp; '
             f'<span style="color:#e2e8f0">- - current price</span> &nbsp; '
             f'<span style="color:{"#16a34a" if opt_t=="CALL" else "#dc2626"}">'
-            f'&middot;&middot;&middot; breakeven</span>'
+            f'&middot;&middot;&middot; breakeven (BE)</span>'
             f'</div>'
-            f'{svg}'
+            f'<img src="{chart_url}" alt="Payoff chart for {r.get("symbol","")} {opt_t}" '
+            f'width="572" height="148" style="display:block;border-radius:6px"/>'
             f'</td></tr>'
         )
         return data_row + chart_row
