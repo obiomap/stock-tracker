@@ -590,6 +590,46 @@ body{
 .wl-neut{background:rgba(99,102,241,.14);color:#818cf8}
 .wl-na{color:rgba(255,255,255,.22)}
 @media(max-width:580px){.wl-search{width:100%}.wl-controls{flex-direction:column;align-items:flex-start}.wl-ts{margin-left:0}}
+
+/* ── OPTIONS INTELLIGENCE ── */
+.opt-section{margin-bottom:40px}
+.opt-tabs{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.opt-tab{padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;
+         border:1.5px solid rgba(255,255,255,.12);cursor:pointer;
+         background:rgba(255,255,255,.045);color:rgba(255,255,255,.55);
+         transition:all .18s}
+.opt-tab.active-call{background:rgba(16,185,129,.18);border-color:#10b981;color:#34d399}
+.opt-tab.active-put{background:rgba(239,68,68,.18);border-color:#ef4444;color:#f87171}
+.opt-tab:hover{background:rgba(255,255,255,.09);color:#fff}
+.opt-panel{display:none}
+.opt-panel.active{display:block}
+.opt-wrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,.09);
+          background:rgba(255,255,255,.02)}
+.opt-table{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
+.opt-table thead th{padding:10px 14px;text-align:left;font-size:11px;font-weight:700;
+                    text-transform:uppercase;letter-spacing:.6px;
+                    background:rgba(255,255,255,.04);color:rgba(255,255,255,.45);
+                    white-space:nowrap}
+.opt-table thead th:not(:first-child){text-align:right}
+.opt-table tbody tr{border-bottom:1px solid rgba(255,255,255,.038)}
+.opt-table tbody tr:last-child{border-bottom:none}
+.opt-table tbody tr:hover td{background:rgba(255,255,255,.04)}
+.opt-table td{padding:10px 14px;white-space:nowrap}
+.opt-sym{font-weight:700;color:#e2e8f0}
+.opt-badge-call{display:inline-block;padding:2px 8px;border-radius:5px;
+                font-size:11px;font-weight:700;letter-spacing:.4px;
+                background:rgba(16,185,129,.2);color:#34d399}
+.opt-badge-put{display:inline-block;padding:2px 8px;border-radius:5px;
+               font-size:11px;font-weight:700;letter-spacing:.4px;
+               background:rgba(239,68,68,.2);color:#f87171}
+.opt-score{font-weight:700}
+.opt-score-hi{color:#34d399}
+.opt-score-mid{color:#fbbf24}
+.opt-score-lo{color:rgba(255,255,255,.42)}
+.opt-reason{font-size:11px;color:rgba(255,255,255,.42);max-width:280px;
+            white-space:normal;line-height:1.4}
+.opt-empty{text-align:center;padding:28px;color:rgba(255,255,255,.28);font-style:italic}
+.opt-disclaimer{margin-top:10px;font-size:11px;color:rgba(255,255,255,.3);text-align:center}
 """
 
 
@@ -1116,6 +1156,114 @@ def create_app() -> Flask:
         if not wl_rows:
             wl_rows = '<tr><td colspan="8" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
 
+        # -- options intelligence section
+        opt_recs = db.get_option_recs(40)
+        call_recs = [r for r in opt_recs if r.get("opt_type") == "CALL"]
+        put_recs  = [r for r in opt_recs if r.get("opt_type") == "PUT"]
+
+        def _opt_rows(recs: list[dict], opt_type: str) -> str:
+            if not recs:
+                return f'<tr><td colspan="9" class="opt-empty">No {opt_type} recommendations yet — data refreshes every 5 minutes</td></tr>'
+            rows = ""
+            for r in recs:
+                sym    = r.get("symbol", "")
+                strike = r.get("strike") or 0
+                expiry = r.get("expiry", "")[:10]
+                days   = r.get("days_out") or 0
+                bid    = r.get("bid") or 0
+                ask    = r.get("ask") or 0
+                last   = r.get("last_price") or 0
+                iv_pct = (r.get("iv") or 0) * 100
+                oi     = r.get("open_interest") or 0
+                vol    = r.get("volume") or 0
+                sc     = r.get("score") or 0
+                reason = r.get("reason", "")
+                cprice = r.get("current_price") or 0
+
+                badge = (f'<span class="opt-badge-call">CALL</span>'
+                         if opt_type == "CALL"
+                         else f'<span class="opt-badge-put">PUT</span>')
+                sc_cls = ("opt-score-hi" if sc >= 60
+                          else "opt-score-mid" if sc >= 40
+                          else "opt-score-lo")
+                oi_str  = f"{oi:,}"
+                vol_str = f"{vol:,}" if vol else "—"
+                bid_ask = f"${bid:.2f} / ${ask:.2f}" if bid or ask else "—"
+                last_str= f"${last:.2f}" if last else "—"
+                days_str= f"{days}d" if days else "—"
+
+                rows += (
+                    f'<tr>'
+                    f'<td class="opt-sym">{sec_mod.display_symbol(sym)}</td>'
+                    f'<td style="text-align:right">{badge}</td>'
+                    f'<td style="text-align:right">${cprice:.2f}</td>'
+                    f'<td style="text-align:right">${strike:.2f}</td>'
+                    f'<td style="text-align:right">{expiry} <span style="color:rgba(255,255,255,.35)">({days_str})</span></td>'
+                    f'<td style="text-align:right">{last_str}</td>'
+                    f'<td style="text-align:right">{bid_ask}</td>'
+                    f'<td style="text-align:right">{iv_pct:.0f}%</td>'
+                    f'<td style="text-align:right">{oi_str}</td>'
+                    f'<td style="text-align:right">{vol_str}</td>'
+                    f'<td style="text-align:right"><span class="opt-score {sc_cls}">{sc:.0f}</span></td>'
+                    f'<td class="opt-reason">{reason}</td>'
+                    f'</tr>'
+                )
+            return rows
+
+        col_heads = (
+            '<th>Symbol</th>'
+            '<th style="text-align:right">Type</th>'
+            '<th style="text-align:right">Stock&nbsp;Price</th>'
+            '<th style="text-align:right">Strike</th>'
+            '<th style="text-align:right">Expiry</th>'
+            '<th style="text-align:right">Last</th>'
+            '<th style="text-align:right">Bid&nbsp;/&nbsp;Ask</th>'
+            '<th style="text-align:right">IV</th>'
+            '<th style="text-align:right">OI</th>'
+            '<th style="text-align:right">Vol</th>'
+            '<th style="text-align:right">Score</th>'
+            '<th>Signal Reason</th>'
+        )
+
+        options_section_html = f"""
+  <div class="opt-section" id="options">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F4CA; Options Intelligence</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">
+        Real-time call &amp; put recommendations &bull; refreshes every 5 min
+      </span>
+    </div>
+    <div class="opt-tabs">
+      <div class="opt-tab active-call" id="optTabCall" onclick="optSwitch('call')">
+        &#x1F4C8; CALLS &mdash; {len(call_recs)} recommendations
+      </div>
+      <div class="opt-tab" id="optTabPut" onclick="optSwitch('put')">
+        &#x1F4C9; PUTS &mdash; {len(put_recs)} recommendations
+      </div>
+    </div>
+    <div class="opt-panel active" id="optPanelCall">
+      <div class="opt-wrap">
+        <table class="opt-table">
+          <thead><tr>{col_heads}</tr></thead>
+          <tbody>{_opt_rows(call_recs, "CALL")}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="opt-panel" id="optPanelPut">
+      <div class="opt-wrap">
+        <table class="opt-table">
+          <thead><tr>{col_heads}</tr></thead>
+          <tbody>{_opt_rows(put_recs, "PUT")}</tbody>
+        </table>
+      </div>
+    </div>
+    <p class="opt-disclaimer">
+      &#x26A0;&#xFE0F; Options carry significant risk and can expire worthless.
+      Score = liquidity + placement quality (0-100). Not financial advice. Do your own research.
+    </p>
+  </div>
+"""
+
         # -- knowledge base preview (4 random-ish topics)
         preview_keys = ["rsi", "macd", "patterns_golden_cross", "risk_position_sizing"]
         topic_cards = ""
@@ -1149,6 +1297,7 @@ def create_app() -> Flask:
   <div class="nav-logo"><span>&#x1F4C8;</span> Stock Tracker</div>
   <div class="nav-links">
     <a href="#watchlist">&#x1F4CA; Live Prices</a>
+    <a href="#options">&#x1F4C8; Options</a>
     <a href="/learn">Knowledge Base</a>
     <a href="#subscribe" class="nav-cta">Get Alerts</a>
   </div>
@@ -1345,6 +1494,9 @@ def create_app() -> Flask:
     </div>
   </div>
 
+  <!-- OPTIONS INTELLIGENCE -->
+  {options_section_html}
+
   <!-- KNOWLEDGE PREVIEW -->
   <div class="section-head">
     <h2>&#x1F4DA; Start learning</h2>
@@ -1466,6 +1618,17 @@ def create_app() -> Flask:
       }}
     }});
   }});
+}})();
+
+// ── Options Intelligence tab switcher ────────────────────────────────────
+function optSwitch(tab) {{
+  document.getElementById('optPanelCall').classList.toggle('active', tab === 'call');
+  document.getElementById('optPanelPut').classList.toggle('active',  tab === 'put');
+  var tc = document.getElementById('optTabCall');
+  var tp = document.getElementById('optTabPut');
+  if(tc) {{ tc.className = 'opt-tab' + (tab==='call' ? ' active-call' : ''); }}
+  if(tp) {{ tp.className = 'opt-tab' + (tab==='put'  ? ' active-put'  : ''); }}
+}}
 }})();
 </script>
 """

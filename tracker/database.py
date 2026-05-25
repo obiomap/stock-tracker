@@ -91,6 +91,26 @@ def init_db() -> None:
                 was_correct INTEGER,
                 scored_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS options_recs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                opt_type TEXT NOT NULL,
+                strike REAL,
+                expiry TEXT,
+                days_out INTEGER,
+                bid REAL,
+                ask REAL,
+                last_price REAL,
+                iv REAL,
+                open_interest INTEGER,
+                volume INTEGER,
+                score REAL,
+                confidence REAL,
+                reason TEXT,
+                current_price REAL,
+                created_at TEXT
+            );
         """)
     _migrate_columns()
 
@@ -422,6 +442,44 @@ def get_recent_predictions(limit: int = 20) -> list[dict]:
         rows = conn.execute("""
             SELECT * FROM predictions_log
             ORDER BY prediction_date DESC, id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Options recommendations ───────────────────────────────────────────────────
+
+def clear_option_recs() -> None:
+    """Delete all existing options recommendations (called before each refresh)."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM options_recs")
+
+
+def upsert_option_recs(recs: list[dict]) -> None:
+    """Insert a batch of option recommendations."""
+    if not recs:
+        return
+    now = datetime.now().isoformat()
+    with get_connection() as conn:
+        for r in recs:
+            conn.execute("""
+                INSERT INTO options_recs
+                    (symbol, opt_type, strike, expiry, days_out, bid, ask,
+                     last_price, iv, open_interest, volume, score, confidence,
+                     reason, current_price, created_at)
+                VALUES
+                    (:symbol, :type, :strike, :expiry, :days_out, :bid, :ask,
+                     :last, :iv, :open_interest, :volume, :score, :confidence,
+                     :reason, :current_price, :created_at)
+            """, {**r, "created_at": now})
+
+
+def get_option_recs(limit: int = 40) -> list[dict]:
+    """Return the most recent options recommendations, sorted by score desc."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT * FROM options_recs
+            ORDER BY score DESC
             LIMIT ?
         """, (limit,)).fetchall()
     return [dict(r) for r in rows]

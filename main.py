@@ -26,6 +26,7 @@ from tracker import sectors as sec_mod
 from tracker import knowledge as kb_mod
 from tracker import social as social_mod
 from tracker import sms as sms_mod
+from tracker import options as opt_mod
 
 console = Console()
 
@@ -132,8 +133,53 @@ def refresh_all(config: dict) -> None:
         _state["alerts"] = db.get_recent_alerts(8)
         _state["last_refresh"] = datetime.now()
         _state["market_open"] = _is_market_open()
+
+        # ── Options intelligence refresh ──────────────────────────────────────
+        try:
+            _refresh_options(stocks_out)
+        except Exception:
+            pass
     finally:
         _state["refreshing"] = False
+
+
+def _refresh_options(stocks: list[dict]) -> None:
+    """
+    Fetch and score options for the top high-signal stocks.
+    Only runs for BULLISH/BEARISH signals with confidence >= 55%
+    on optionable (non-crypto, price >= $5) symbols.
+    """
+    candidates = [
+        s for s in stocks
+        if s.get("prediction") in ("BULLISH", "BEARISH")
+        and (s.get("prediction_confidence") or 0) >= 0.55
+        and opt_mod.is_optionable(s["symbol"], s.get("price") or 0)
+    ]
+    # Rank by confidence, analyse top 20 to keep refresh time reasonable
+    candidates.sort(key=lambda s: s.get("prediction_confidence") or 0, reverse=True)
+    candidates = candidates[:20]
+
+    all_recs: list[dict] = []
+    for s in candidates:
+        try:
+            recs = opt_mod.get_recommendations(
+                symbol=s["symbol"],
+                price=s["price"],
+                prediction=s["prediction"],
+                confidence=s["prediction_confidence"],
+                rsi=s.get("rsi"),
+                macd=s.get("macd"),
+                change_pct=s.get("change_pct"),
+            )
+            all_recs.extend(recs)
+        except Exception:
+            pass
+        time.sleep(0.15)
+
+    # Keep top 30 by score, clear old, store new
+    all_recs.sort(key=lambda r: r["score"], reverse=True)
+    db.clear_option_recs()
+    db.upsert_option_recs(all_recs[:30])
 
 
 # ── dashboard renderers ───────────────────────────────────────────────────────
