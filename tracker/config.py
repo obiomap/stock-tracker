@@ -105,6 +105,16 @@ DEFAULT_CONFIG = {
         # Dividend & Value
         "MO", "T", "VZ", "PEP", "MMM",                     # Tobacco, Telecom, Telecom, Beverages, Industrials
         "D", "SO", "DUK", "CL", "MDLZ",                    # Utilities, Utilities, Utilities, Consumer staples
+        # Dividend & Value additions
+        "ENB", "BCE", "BTI", "PM",                          # Pipelines, Canadian Telecom, Tobacco, Tobacco
+        "OKE", "WPC", "EPD", "ES", "AEP", "EXC",           # Midstream, REIT, Pipelines, Utilities x3
+        # US Tech & Growth additions
+        "TOST", "GTLB", "RELY",                             # Restaurant OS, DevSecOps, Remittance fintech
+        # Healthcare & Biotech additions
+        "HCA", "CI", "CVS",                                 # Hospital systems, Health insurance, Pharmacy
+        # Commodities & Mining
+        "FCX", "AA", "CLF", "NEM", "AEM",                  # Copper, Aluminium, Steel, Gold miners
+        "WPM", "GOLD", "MP", "RS",                          # Silver streams, Gold, Rare earth, Metals dist.
     ],
     "stock_sectors": {
         # Cybersecurity
@@ -220,6 +230,22 @@ DEFAULT_CONFIG = {
         "MMM":   "Dividend & Value", "D":    "Dividend & Value",
         "SO":    "Dividend & Value", "DUK":  "Dividend & Value",
         "CL":    "Dividend & Value", "MDLZ": "Dividend & Value",
+        "ENB":   "Dividend & Value", "BCE":  "Dividend & Value",
+        "BTI":   "Dividend & Value", "PM":   "Dividend & Value",
+        "OKE":   "Dividend & Value", "WPC":  "Dividend & Value",
+        "EPD":   "Dividend & Value", "ES":   "Dividend & Value",
+        "AEP":   "Dividend & Value", "EXC":  "Dividend & Value",
+        # US Tech & Growth additions
+        "TOST":  "Technology", "GTLB": "Technology", "RELY": "Fintech",
+        # Healthcare additions
+        "HCA":   "Healthcare & Biotech", "CI": "Healthcare & Biotech",
+        "CVS":   "Healthcare & Biotech",
+        # Commodities & Mining
+        "FCX":   "Commodities & Mining", "AA":   "Commodities & Mining",
+        "CLF":   "Commodities & Mining", "NEM":  "Commodities & Mining",
+        "AEM":   "Commodities & Mining", "WPM":  "Commodities & Mining",
+        "GOLD":  "Commodities & Mining", "MP":   "Commodities & Mining",
+        "RS":    "Commodities & Mining",
     },
     "industry_etfs": {
         "Technology": "XLK",
