@@ -961,12 +961,18 @@ def create_app() -> Flask:
     @_app.route("/status")
     def status():
         import json as _json
-        stocks = db.get_all_stocks()
-        penny = [s for s in stocks if (s.get("price") or 0) < 10 and not sec_mod.is_crypto(s["symbol"])]
+        config  = cfg_mod.load_config()
+        stocks  = db.get_all_stocks()
+        db_syms = {s["symbol"] for s in stocks}
+        wl      = config.get("watchlist", [])
+        missing = [s for s in wl if s not in db_syms]
+        penny   = [s for s in stocks if (s.get("price") or 0) < 10 and not sec_mod.is_crypto(s["symbol"])]
         return Response(
             _json.dumps({
                 "db_path": str(db.DB_PATH),
+                "watchlist_count": len(wl),
                 "total_stocks": len(stocks),
+                "missing_from_db": missing,
                 "penny_stocks": len(penny),
                 "penny_symbols": [s["symbol"] for s in penny],
                 "sample": [{k: s[k] for k in ("symbol","price","rsi","prediction") if k in s} for s in penny[:5]],
