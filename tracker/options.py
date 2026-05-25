@@ -114,12 +114,26 @@ def _score_contract(row: dict, current_price: float, opt_type: str) -> float:
     Score a single option contract 0-100.
     Higher = more attractive (liquid, well-placed strike, reasonable IV).
     """
-    strike = float(row.get("strike") or 0)
-    iv     = float(row.get("impliedVolatility") or 0)
-    oi     = int(row.get("openInterest") or 0)
-    vol    = int(row.get("volume") or 0)
-    bid    = float(row.get("bid") or 0)
-    ask    = float(row.get("ask") or 0)
+    def _safe_float(v, default=0.0):
+        try:
+            f = float(v)
+            return default if (f != f) else f  # NaN check: NaN != NaN
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_int(v, default=0):
+        try:
+            f = float(v)
+            return default if (f != f) else int(f)
+        except (TypeError, ValueError):
+            return default
+
+    strike = _safe_float(row.get("strike"))
+    iv     = _safe_float(row.get("impliedVolatility"))
+    oi     = _safe_int(row.get("openInterest"))
+    vol    = _safe_int(row.get("volume"))
+    bid    = _safe_float(row.get("bid"))
+    ask    = _safe_float(row.get("ask"))
 
     if not strike or not current_price:
         return 0.0
@@ -198,12 +212,23 @@ def get_recommendations(
         if sc < 25:
             continue
 
-        bid    = float(row_d.get("bid") or 0)
-        ask    = float(row_d.get("ask") or 0)
-        last   = float(row_d.get("lastPrice") or 0)
-        iv     = float(row_d.get("impliedVolatility") or 0)
-        oi     = int(row_d.get("openInterest") or 0)
-        vol    = int(row_d.get("volume") or 0)
+        def _sf(v, d=0.0):
+            try:
+                f = float(v); return d if f != f else f
+            except (TypeError, ValueError):
+                return d
+        def _si(v, d=0):
+            try:
+                f = float(v); return d if f != f else int(f)
+            except (TypeError, ValueError):
+                return d
+
+        bid    = _sf(row_d.get("bid"))
+        ask    = _sf(row_d.get("ask"))
+        last   = _sf(row_d.get("lastPrice"))
+        iv     = _sf(row_d.get("impliedVolatility"))
+        oi     = _si(row_d.get("openInterest"))
+        vol    = _si(row_d.get("volume"))
         expiry = str(row_d.get("expiry") or "")
 
         # Days until expiry
