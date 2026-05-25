@@ -394,8 +394,18 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
   {sec_movers}
   {sec_ext}
 
+  <!-- SMS Preview -->
+  <div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;
+              padding:14px 18px;margin-top:20px;margin-bottom:12px">
+    <p style="margin:0 0 6px;color:#64748b;font-size:10px;text-transform:uppercase;
+              letter-spacing:.08em;font-weight:600">&#x1F4F1; SMS Summary</p>
+    <p style="margin:0;color:#94a3b8;font-size:12px;font-family:monospace;line-height:1.6">
+      {build_sms_summary(stocks)}
+    </p>
+  </div>
+
   <!-- Footer -->
-  <p style="color:#334155;font-size:11px;margin-top:20px;text-align:center;line-height:1.7">
+  <p style="color:#334155;font-size:11px;margin-top:12px;text-align:center;line-height:1.7">
     Stock Tracker &bull; {now} UTC &bull; Prices delayed ~15 min<br>
     <a href="https://jpstocktracker.pro/unsubscribe" style="color:#4f46e5">Unsubscribe</a>
   </p>
