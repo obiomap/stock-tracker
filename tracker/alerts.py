@@ -238,6 +238,130 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     </body></html>"""
 
 
+def _payoff_svg(opt_type: str, strike: float, current_price: float,
+                bid: float, ask: float) -> str:
+    """
+    Inline SVG payoff-at-expiry diagram for one option contract.
+    Dark background; green/red fill zones; dashed lines for now/strike/BE.
+    """
+    mid = (bid + ask) / 2 if bid > 0 and ask > 0 else max(bid, ask, 0.01)
+
+    W, H = 420, 110
+    pl, pr, pt, pb = 46, 12, 14, 26   # padding: left, right, top, bottom
+    pw = W - pl - pr
+    ph = H - pt - pb
+
+    # Breakeven price
+    be = strike + mid if opt_type == "CALL" else strike - mid
+
+    # X-axis range — wide enough to always show breakeven + current price
+    x0 = min(strike * 0.84, be * 0.97, current_price * 0.93)
+    x1 = max(strike * 1.16, be * 1.03, current_price * 1.07)
+    pad_x = (x1 - x0) * 0.04
+    x0 -= pad_x;  x1 += pad_x
+
+    # Payoff function
+    def pnl(price):
+        return (max(price - strike, 0) - mid) if opt_type == "CALL" \
+               else (max(strike - price, 0) - mid)
+
+    # Y-axis range
+    pnl_lo = -mid * 1.25
+    pnl_hi = max(pnl(x1 if opt_type == "CALL" else x0), mid * 1.5) * 1.1
+
+    def px(price): return pl + (price - x0) / (x1 - x0) * pw
+    def py(p):     return pt + (pnl_hi - p) / (pnl_hi - pnl_lo) * ph
+
+    zero_y   = py(0)
+    strike_x = px(strike)
+    curr_x   = max(pl, min(pl + pw, px(current_price)))
+    be_x     = max(pl + 1, min(pl + pw - 1, px(be)))
+
+    # Smooth polyline (80 segments)
+    N = 80
+    pts = [(px(x0 + (x1 - x0) * i / N), py(pnl(x0 + (x1 - x0) * i / N)))
+           for i in range(N + 1)]
+    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+
+    # Fill polygons
+    # Loss region (always below zero line)
+    if opt_type == "CALL":
+        # flat −mid from left to strike, then diagonal up to be_x/zero_y
+        loss_pts = [(pl, zero_y), (pl, py(-mid)),
+                    (strike_x, py(-mid)), (be_x, zero_y)]
+        # profit from be_x upward to right edge
+        gain_pts = [(be_x, zero_y),
+                    (pl + pw, py(pnl(x1))),
+                    (pl + pw, zero_y)]
+    else:
+        # profit on left side, down to be_x
+        gain_pts = [(pl, zero_y),
+                    (pl, py(pnl(x0))),
+                    (be_x, zero_y)]
+        # flat −mid from be_x/zero_y to strike, then right edge
+        loss_pts = [(be_x, zero_y),
+                    (strike_x, py(-mid)),
+                    (pl + pw, py(-mid)),
+                    (pl + pw, zero_y)]
+
+    def _pp(pts_list):
+        return " ".join(f"{x:.1f},{y:.1f}" for x, y in pts_list)
+
+    col = "#16a34a" if opt_type == "CALL" else "#dc2626"
+
+    # Y-axis tick labels
+    y_ticks = ""
+    for val, lbl in [(-mid, f"-${mid:.2f}"), (0, "$0"),
+                     (mid * 2, f"+${mid * 2:.2f}")]:
+        yp = py(val)
+        if pt - 2 <= yp <= H - pb + 2:
+            y_ticks += (f'<text x="{pl - 3}" y="{yp + 3:.1f}" text-anchor="end" '
+                        f'fill="#64748b" font-size="9" font-family="monospace">{lbl}</text>')
+
+    # X-axis tick labels for strike and current price
+    x_ticks = (f'<text x="{strike_x:.1f}" y="{H - 5}" text-anchor="middle" '
+               f'fill="#f59e0b" font-size="9">K=${strike:.0f}</text>')
+    if abs(curr_x - strike_x) > 18:
+        x_ticks += (f'<text x="{curr_x:.1f}" y="{H - 5}" text-anchor="middle" '
+                    f'fill="#cbd5e1" font-size="9">${current_price:.2f}</text>')
+
+    # Breakeven label (above the line if space allows)
+    be_lbl_y = pt + 10 if be_x > pl + pw * 0.4 else H - pb - 4
+    be_lbl = (f'<text x="{be_x:.1f}" y="{be_lbl_y}" text-anchor="middle" '
+              f'fill="{col}" font-size="8" opacity="0.8">BE=${be:.2f}</text>')
+
+    # Legend (top-left inside chart)
+    legend = (f'<text x="{pl + 4}" y="{pt + 9}" fill="#94a3b8" font-size="8">'
+              f'&#x2500;&#x2500; K &nbsp; - - now &nbsp; &#xB7;&#xB7;&#xB7; BE</text>')
+
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}">'
+        f'<rect width="{W}" height="{H}" fill="#0f172a" rx="6"/>'
+        # fills
+        f'<polygon points="{_pp(loss_pts)}" fill="#ef4444" opacity="0.13"/>'
+        f'<polygon points="{_pp(gain_pts)}" fill="#22c55e" opacity="0.16"/>'
+        # axes
+        f'<line x1="{pl}" y1="{zero_y:.1f}" x2="{pl+pw}" y2="{zero_y:.1f}"'
+        f' stroke="#334155" stroke-width="1"/>'
+        f'<line x1="{pl}" y1="{pt}" x2="{pl}" y2="{H-pb}"'
+        f' stroke="#334155" stroke-width="1"/>'
+        # payoff curve
+        f'<polyline points="{poly}" fill="none" stroke="{col}"'
+        f' stroke-width="2" stroke-linejoin="round"/>'
+        # strike (yellow dashes)
+        f'<line x1="{strike_x:.1f}" y1="{pt}" x2="{strike_x:.1f}" y2="{H-pb}"'
+        f' stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3"/>'
+        # current price (white dashes)
+        f'<line x1="{curr_x:.1f}" y1="{pt}" x2="{curr_x:.1f}" y2="{H-pb}"'
+        f' stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2,4" opacity="0.75"/>'
+        # breakeven (colour dashes, faint)
+        f'<line x1="{be_x:.1f}" y1="{pt}" x2="{be_x:.1f}" y2="{H-pb}"'
+        f' stroke="{col}" stroke-width="1" stroke-dasharray="2,3" opacity="0.55"/>'
+        f'{y_ticks}{x_ticks}{be_lbl}{legend}'
+        f'</svg>'
+    )
+
+
 def build_options_email(new_recs: list[dict]) -> str:
     """Build a rich HTML email for newly-appeared options recommendations."""
     now   = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -245,68 +369,95 @@ def build_options_email(new_recs: list[dict]) -> str:
     calls = [r for r in new_recs if r.get("type", "").upper() == "CALL"]
     puts  = [r for r in new_recs if r.get("type", "").upper() == "PUT"]
 
-    def _row(r: dict, bg: str) -> str:
-        opt_t  = r.get("type", "").upper()
-        color  = "#16a34a" if opt_t == "CALL" else "#dc2626"
-        iv_pct = f"{r.get('iv', 0) * 100:.0f}%"
-        score  = r.get("score", 0)
-        score_bg = "#166534" if score >= 70 else "#1e40af" if score >= 50 else "#475569"
-        return f"""
-        <tr style="background:{bg};border-bottom:1px solid #e2e8f0">
-          <td style="padding:10px 12px;font-weight:bold">{r.get('symbol','')}</td>
-          <td style="padding:10px 12px;text-align:center">
-            <span style="background:{color};color:white;padding:2px 8px;
-                         border-radius:4px;font-size:12px;font-weight:bold">{opt_t}</span>
-          </td>
-          <td style="padding:10px 12px;text-align:right">${r.get('current_price', 0):.2f}</td>
-          <td style="padding:10px 12px;text-align:right">${r.get('strike', 0):.2f}</td>
-          <td style="padding:10px 12px;text-align:right">
-            {r.get('expiry','')} <span style="color:#94a3b8">({r.get('days_out',0)}d)</span>
-          </td>
-          <td style="padding:10px 12px;text-align:right">
-            ${r.get('bid', 0):.2f}&nbsp;/&nbsp;${r.get('ask', 0):.2f}
-          </td>
-          <td style="padding:10px 12px;text-align:right">{iv_pct}</td>
-          <td style="padding:10px 12px;text-align:right">{int(r.get('open_interest', 0)):,}</td>
-          <td style="padding:10px 12px;text-align:right">{int(r.get('volume', 0)):,}</td>
-          <td style="padding:10px 12px;text-align:center">
-            <span style="background:{score_bg};color:white;padding:2px 8px;
-                         border-radius:4px;font-weight:bold">{score:.0f}</span>
-          </td>
-          <td style="padding:10px 12px;color:#64748b;font-size:13px">{r.get('reason','')}</td>
-        </tr>"""
+    NCOLS = 11   # number of columns in the data table
 
-    _THEAD = """
-        <tr style="background:#1e3a8a;color:white;font-size:12px">
-          <th style="padding:8px 12px;text-align:left">Symbol</th>
-          <th style="padding:8px 12px;text-align:center">Type</th>
-          <th style="padding:8px 12px;text-align:right">Stock&nbsp;Price</th>
-          <th style="padding:8px 12px;text-align:right">Strike</th>
-          <th style="padding:8px 12px;text-align:right">Expiry</th>
-          <th style="padding:8px 12px;text-align:right">Bid&nbsp;/&nbsp;Ask</th>
-          <th style="padding:8px 12px;text-align:right">IV</th>
-          <th style="padding:8px 12px;text-align:right">OI</th>
-          <th style="padding:8px 12px;text-align:right">Vol</th>
-          <th style="padding:8px 12px;text-align:center">Score</th>
-          <th style="padding:8px 12px;text-align:left">Signal Reason</th>
-        </tr>"""
+    def _rows(r: dict, bg: str) -> str:
+        """Return two <tr>: the data row + a full-width payoff chart row."""
+        opt_t    = r.get("type", "").upper()
+        color    = "#16a34a" if opt_t == "CALL" else "#dc2626"
+        iv_pct   = f"{r.get('iv', 0) * 100:.0f}%"
+        score    = r.get("score", 0)
+        score_bg = "#166534" if score >= 70 else "#1e40af" if score >= 50 else "#475569"
+
+        data_row = (
+            f'<tr style="background:{bg}">'
+            f'<td style="padding:10px 12px;font-weight:bold">{r.get("symbol","")}</td>'
+            f'<td style="padding:10px 12px;text-align:center">'
+            f'<span style="background:{color};color:white;padding:2px 8px;'
+            f'border-radius:4px;font-size:12px;font-weight:bold">{opt_t}</span></td>'
+            f'<td style="padding:10px 12px;text-align:right">${r.get("current_price",0):.2f}</td>'
+            f'<td style="padding:10px 12px;text-align:right">${r.get("strike",0):.2f}</td>'
+            f'<td style="padding:10px 12px;text-align:right">'
+            f'{r.get("expiry","")} <span style="color:#94a3b8">({r.get("days_out",0)}d)</span></td>'
+            f'<td style="padding:10px 12px;text-align:right">'
+            f'${r.get("bid",0):.2f}&nbsp;/&nbsp;${r.get("ask",0):.2f}</td>'
+            f'<td style="padding:10px 12px;text-align:right">{iv_pct}</td>'
+            f'<td style="padding:10px 12px;text-align:right">{int(r.get("open_interest",0)):,}</td>'
+            f'<td style="padding:10px 12px;text-align:right">{int(r.get("volume",0)):,}</td>'
+            f'<td style="padding:10px 12px;text-align:center">'
+            f'<span style="background:{score_bg};color:white;padding:2px 8px;'
+            f'border-radius:4px;font-weight:bold">{score:.0f}</span></td>'
+            f'<td style="padding:10px 12px;color:#64748b;font-size:13px">'
+            f'{r.get("reason","")}</td>'
+            f'</tr>'
+        )
+
+        svg = _payoff_svg(
+            opt_t,
+            float(r.get("strike", 0)),
+            float(r.get("current_price", 0)),
+            float(r.get("bid", 0)),
+            float(r.get("ask", 0)),
+        )
+        chart_row = (
+            f'<tr style="background:#111827;border-bottom:2px solid #1e293b">'
+            f'<td colspan="{NCOLS}" style="padding:10px 16px 12px">'
+            f'<div style="font-size:10px;color:#64748b;margin-bottom:4px">'
+            f'Payoff at expiry &mdash; '
+            f'<span style="color:#f59e0b">&#x2015;&#x2015; strike</span> &nbsp; '
+            f'<span style="color:#e2e8f0">- - current price</span> &nbsp; '
+            f'<span style="color:{"#16a34a" if opt_t=="CALL" else "#dc2626"}">'
+            f'&middot;&middot;&middot; breakeven</span>'
+            f'</div>'
+            f'{svg}'
+            f'</td></tr>'
+        )
+        return data_row + chart_row
+
+    _THEAD = (
+        f'<tr style="background:#1e3a8a;color:white;font-size:12px">'
+        f'<th style="padding:8px 12px;text-align:left">Symbol</th>'
+        f'<th style="padding:8px 12px;text-align:center">Type</th>'
+        f'<th style="padding:8px 12px;text-align:right">Stock&nbsp;Price</th>'
+        f'<th style="padding:8px 12px;text-align:right">Strike</th>'
+        f'<th style="padding:8px 12px;text-align:right">Expiry</th>'
+        f'<th style="padding:8px 12px;text-align:right">Bid&nbsp;/&nbsp;Ask</th>'
+        f'<th style="padding:8px 12px;text-align:right">IV</th>'
+        f'<th style="padding:8px 12px;text-align:right">OI</th>'
+        f'<th style="padding:8px 12px;text-align:right">Vol</th>'
+        f'<th style="padding:8px 12px;text-align:center">Score</th>'
+        f'<th style="padding:8px 12px;text-align:left">Signal Reason</th>'
+        f'</tr>'
+    )
 
     def _section(recs: list[dict], title: str, color: str, emoji: str) -> str:
         if not recs:
             return ""
-        rows = "".join(_row(r, "#fff" if i % 2 == 0 else "#f8fafc") for i, r in enumerate(recs))
-        return f"""
-        <h3 style="color:{color};margin:24px 0 8px">{emoji} {title} &mdash; {len(recs)} new</h3>
-        <table border="0" cellspacing="0" cellpadding="0"
-               style="border-collapse:collapse;width:100%;border-radius:12px;
-                      overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
-          {_THEAD}{rows}
-        </table>"""
+        rows = "".join(_rows(r, "#fff" if i % 2 == 0 else "#f1f5f9")
+                       for i, r in enumerate(recs))
+        return (
+            f'<h3 style="color:{color};margin:24px 0 8px">'
+            f'{emoji} {title} &mdash; {len(recs)} new</h3>'
+            f'<table border="0" cellspacing="0" cellpadding="0" '
+            f'style="border-collapse:collapse;width:100%;border-radius:12px;'
+            f'overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">'
+            f'{_THEAD}{rows}</table>'
+        )
 
     calls_html = _section(calls, "CALL Recommendations", "#16a34a", "&#x1F4C8;")
     puts_html  = _section(puts,  "PUT Recommendations",  "#dc2626", "&#x1F4C9;")
 
-    return f"""
+    return f"""<!DOCTYPE html>
 <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
                    max-width:1000px;margin:auto;background:#f8fafc;padding:24px">
 <div style="background:linear-gradient(135deg,#020617,#1e1b4b);color:white;
