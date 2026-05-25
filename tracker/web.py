@@ -908,9 +908,29 @@ def create_app() -> Flask:
         from . import alerts as alert_mod
         stocks   = db.get_all_stocks()
         earnings = db.get_upcoming_earnings()
-        alerts   = db.get_recent_alerts(20)
-        html     = alert_mod.build_email_report(stocks, earnings, alerts)
+        alerts_l = db.get_recent_alerts(20)
+        html     = alert_mod.build_email_report(stocks, earnings, alerts_l)
         return Response(html, mimetype="text/html")
+
+    @_app.route("/send-test-alert-email")
+    def send_test_alert_email():
+        """Build and send the subscriber alert email to the configured recipient. Admin use only."""
+        import json as _json
+        from . import alerts as alert_mod
+        config   = cfg_mod.load_config()
+        stocks   = db.get_all_stocks()
+        earnings = db.get_upcoming_earnings()
+        alerts_l = db.get_recent_alerts(20)
+        html     = alert_mod.build_email_report(stocks, earnings, alerts_l)
+        recipient = config.get("email", {}).get("recipient", "")
+        ok = alert_mod.send_email("Stock Tracker — Test Alert Email", html, config, recipient)
+        return Response(_json.dumps({
+            "status": "sent" if ok else "failed",
+            "recipient": recipient,
+            "ai_signals": len([s for s in stocks if s.get("prediction") in ("BULLISH","BEARISH") and (s.get("prediction_confidence") or 0) >= 0.50]),
+            "top_movers": min(10, len([s for s in stocks if s.get("change_pct") is not None])),
+            "tech_extremes": len([s for s in stocks if s.get("rsi") is not None and (s["rsi"] <= 30 or s["rsi"] >= 70)]),
+        }, indent=2), mimetype="application/json")
 
     @_app.route("/status")
     def status():
