@@ -34,6 +34,7 @@ def fetch_ticker_snapshot(symbol: str) -> Optional[dict]:
         fi = ticker.fast_info
         hist = ticker.history(period="60d", interval="1d", auto_adjust=True)
         if hist.empty:
+            print(f"[fetch] {symbol}: empty 60d history — skipping")
             return None
 
         avg_vol = int(hist["Volume"].tail(20).mean())
@@ -52,7 +53,8 @@ def fetch_ticker_snapshot(symbol: str) -> Optional[dict]:
         ) if raw_prev else 0.0
         _store(cache_key, result)
         return result
-    except Exception:
+    except Exception as e:
+        print(f"[fetch] {symbol}: exception — {e}")
         return None
 
 
