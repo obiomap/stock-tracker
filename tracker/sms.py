@@ -59,8 +59,8 @@ def _send_twilio(to_number: str, message: str, config: dict) -> bool:
 
 
 def _send_gateway(phone: str, carrier: str, message: str, config: dict) -> bool:
-    """Send via email-to-SMS gateway — requires email to be configured."""
-    from . import alerts as alert_mod
+    """Send via email-to-SMS gateway — requires Resend to be configured."""
+    import os
     # Exact match first; fall back to case-insensitive search
     gateway = CARRIER_GATEWAYS.get(carrier, "")
     if not gateway:
@@ -70,20 +70,34 @@ def _send_gateway(phone: str, carrier: str, message: str, config: dict) -> bool:
                 gateway = v
                 break
     if not gateway:
+        print(f"[SMS/gateway] unknown carrier: {carrier!r}")
         return False
     clean = _clean_phone(phone)
     if len(clean) != 10:
+        print(f"[SMS/gateway] bad phone digits: {clean!r}")
         return False
     sms_addr = f"{clean}{gateway}"
+    print(f"[SMS/gateway] sending to {sms_addr}")
+    # SMS gateways need plain text — send directly via Resend (not HTML wrapper)
+    api_key = os.environ.get("RESEND_API_KEY") or config.get("resend_api_key", "")
+    from_addr = (os.environ.get("RESEND_FROM")
+                 or config.get("resend_from", "onboarding@resend.dev"))
+    if not api_key:
+        print("[SMS/gateway] no RESEND_API_KEY — cannot send")
+        return False
     try:
-        return alert_mod.send_email(
-            subject="",
-            html_body=f"<p>{message[:160]}</p>",
-            config=config,
-            recipient=sms_addr,
-        )
+        import resend
+        resend.api_key = api_key
+        resend.Emails.send({
+            "from": from_addr,
+            "to": [sms_addr],
+            "subject": "",
+            "text": message[:160],
+        })
+        print(f"[SMS/gateway] sent OK → {sms_addr}")
+        return True
     except Exception as e:
-        print(f"[SMS/gateway] {e}")
+        print(f"[SMS/gateway] error → {sms_addr}: {e}")
         return False
 
 
