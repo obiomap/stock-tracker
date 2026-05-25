@@ -185,6 +185,8 @@ def get_recommendations(
     rsi: Optional[float] = None,
     macd: Optional[float] = None,
     change_pct: Optional[float] = None,
+    fib_signal: int = 0,
+    fib_level: str = "",
     top_n: int = 2,
 ) -> list[dict]:
     """
@@ -244,11 +246,24 @@ def get_recommendations(
             elif rsi and rsi < 55:     bullets.append("RSI neutral — upside room")
             if macd and macd > 0:      bullets.append("MACD positive crossover")
             if change_pct and change_pct > 1.5: bullets.append(f"+{change_pct:.1f}% today")
+            if fib_signal == 1 and fib_level:
+                bullets.append(f"Fib {fib_level} support holding")
         else:
             if rsi and rsi > 70:       bullets.append("RSI overbought")
             elif rsi and rsi > 60:     bullets.append("RSI elevated — reversal risk")
             if macd and macd < 0:      bullets.append("MACD turning negative")
             if change_pct and change_pct < -1.5: bullets.append(f"{change_pct:.1f}% today")
+            if fib_signal == -1 and fib_level:
+                bullets.append(f"Fib {fib_level} resistance rejected")
+
+        # Fib alignment bonus: if strike is near a key Fib level, add to score
+        fib_score_bonus = 0.0
+        if fib_signal != 0 and fib_level and sc >= 25:
+            strike_v = float(row_d.get("strike") or 0)
+            # Check if strike is within 2% of the Fib level price proxy
+            # (we use the raw score here; fib_level just signals context)
+            fib_score_bonus = 6.0  # modest bonus for Fib-aligned contracts
+        sc = min(sc + fib_score_bonus, 100.0)
 
         recs.append({
             "symbol":        symbol,

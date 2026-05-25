@@ -91,6 +91,7 @@ def refresh_all(config: dict) -> None:
                 predictions_out[sym] = prediction
 
                 sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
+                _fib = ind_data.get("fib_levels", {})
                 stock_row = {
                     "symbol": sym,
                     "price": snap["price"],
@@ -109,6 +110,8 @@ def refresh_all(config: dict) -> None:
                     "prediction_confidence": prediction["confidence"],
                     "rule_signals": [s["name"] for s in prediction["rule_signals"]],
                     "sector": sector,
+                    "fib_signal": int(_fib.get("signal", 0)),
+                    "fib_level":  _fib.get("signal_level", ""),
                 }
                 db.upsert_stock(stock_row)
                 stocks_out.append(stock_row)
@@ -189,6 +192,8 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
                 rsi=s.get("rsi"),
                 macd=s.get("macd"),
                 change_pct=s.get("change_pct"),
+                fib_signal=s.get("fib_signal", 0),
+                fib_level=s.get("fib_level", ""),
             )
             if recs:
                 print(f"[options] {s['symbol']} → {len(recs)} {s['prediction']} recs (score {recs[0]['score']:.0f})")

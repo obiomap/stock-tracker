@@ -106,6 +106,85 @@ def calculate_williams_r(high: pd.Series, low: pd.Series, close: pd.Series,
     return -100 * (highest_high - close) / (highest_high - lowest_low).replace(0, np.nan)
 
 
+def calculate_fib_position(high: pd.Series, low: pd.Series, close: pd.Series,
+                           lookback: int = 120) -> pd.Series:
+    """
+    Rolling price position within its N-day high-low range — a Fibonacci proximity proxy.
+    Returns 0.0 at the N-day low and 1.0 at the N-day high.
+    Key Fib zones from the bottom: 0.236, 0.382, 0.500, 0.618, 0.764.
+    """
+    rolling_high = high.rolling(lookback, min_periods=30).max()
+    rolling_low  = low.rolling(lookback, min_periods=30).min()
+    rng = (rolling_high - rolling_low).replace(0, np.nan)
+    return (close - rolling_low) / rng
+
+
+def get_fib_levels(high: pd.Series, low: pd.Series, close: pd.Series,
+                   lookback: int = 120) -> dict:
+    """
+    Compute Fibonacci retracement levels from the recent swing high/low.
+
+    Determines trend direction from price position in the range, then
+    builds support (uptrend) or resistance (downtrend) retracement levels.
+
+    Returns:
+      swing_high, swing_low, trend ('up'/'down'), levels dict,
+      nearest_level, nearest_dist_pct, position_pct,
+      signal (1=at Fib support, -1=at Fib resistance, 0=neutral),
+      signal_level (e.g. '61.8%').
+    """
+    FIB_RATIOS = [0.0, 0.236, 0.382, 0.500, 0.618, 0.786, 1.0]
+    FIB_NAMES  = ["0%", "23.6%", "38.2%", "50%", "61.8%", "78.6%", "100%"]
+    PROX_PCT   = 1.5   # within 1.5% of a level = "at" that level
+
+    n = min(lookback, len(close))
+    if n < 30:
+        return {}
+
+    swing_high = float(high.iloc[-n:].max())
+    swing_low  = float(low.iloc[-n:].min())
+    rng        = swing_high - swing_low
+    if rng <= 0 or swing_low <= 0:
+        return {}
+
+    price   = float(close.iloc[-1])
+    pos     = (price - swing_low) / rng          # 0.0=at low, 1.0=at high
+    uptrend = pos >= 0.50                        # upper half of range = uptrend
+
+    # Uptrend: count DOWN from swing_high (support levels)
+    # Downtrend: count UP from swing_low (resistance levels)
+    levels: dict[str, float] = {}
+    for ratio, name in zip(FIB_RATIOS, FIB_NAMES):
+        if uptrend:
+            levels[name] = round(swing_high - ratio * rng, 4)
+        else:
+            levels[name] = round(swing_low  + ratio * rng, 4)
+
+    nearest_name  = min(levels, key=lambda k: abs(levels[k] - price))
+    nearest_price = levels[nearest_name]
+    nearest_dist  = abs(price - nearest_price) / price * 100
+
+    signal, signal_level = 0, ""
+    key_levels = {"38.2%", "50%", "61.8%"}      # highest-confluence S/R zones
+
+    if nearest_dist <= PROX_PCT and nearest_name in key_levels:
+        signal       = 1  if uptrend else -1     # support bounce or resistance rejection
+        signal_level = nearest_name
+
+    return {
+        "swing_high":       round(swing_high, 4),
+        "swing_low":        round(swing_low, 4),
+        "trend":            "up" if uptrend else "down",
+        "levels":           levels,
+        "nearest_level":    nearest_name,
+        "nearest_price":    round(nearest_price, 4),
+        "nearest_dist_pct": round(nearest_dist, 2),
+        "signal":           signal,
+        "signal_level":     signal_level,
+        "position_pct":     round(pos * 100, 1),
+    }
+
+
 def detect_divergence(close: pd.Series, oscillator: pd.Series, lookback: int = 30) -> int:
     """
     Detect classic price/oscillator divergence.
@@ -183,6 +262,13 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df["roc_10d"]    = calculate_roc(close, 10)
     df["williams_r"] = calculate_williams_r(high, low, close)
 
+    # -- Fibonacci proximity (rolling 120-day) ------------------------------------
+    fib_pos = calculate_fib_position(high, low, close, lookback=120)
+    df["fib_pos_120d"] = fib_pos                      # 0.0=at 120d low, 1.0=at 120d high
+    df["fib_dist_38"]  = (fib_pos - 0.382).abs()     # proximity to 38.2% retracement
+    df["fib_dist_50"]  = (fib_pos - 0.500).abs()     # proximity to 50% midpoint
+    df["fib_dist_62"]  = (fib_pos - 0.618).abs()     # proximity to 61.8% golden ratio
+
     # Normalised price position relative to key MAs
     df["price_vs_ma20_pct"] = (close - df["ma20"]) / df["ma20"] * 100
     df["price_vs_ma50_pct"] = (close - df["ma50"]) / df["ma50"] * 100
@@ -208,6 +294,11 @@ def get_latest_indicators(df: pd.DataFrame) -> dict:
     # Divergence -- computed from full series (not per-bar, needs lookback)
     rsi_div  = detect_divergence(enriched["Close"], enriched["rsi"],      lookback=30)
     macd_div = detect_divergence(enriched["Close"], enriched["macd_hist"], lookback=30)
+
+    # Fibonacci -- full swing analysis at current price
+    high_s   = enriched.get("High",  enriched["Close"])
+    low_s    = enriched.get("Low",   enriched["Close"])
+    fib_data = get_fib_levels(high_s, low_s, enriched["Close"])
 
     return {
         # Original
@@ -235,9 +326,16 @@ def get_latest_indicators(df: pd.DataFrame) -> dict:
         "williams_r":       safe(last.get("williams_r")),
         "price_vs_ma20_pct":safe(last.get("price_vs_ma20_pct")),
         "price_vs_ma50_pct":safe(last.get("price_vs_ma50_pct")),
+        # Fibonacci proximity (per-bar rolling)
+        "fib_pos_120d":  safe(last.get("fib_pos_120d")),
+        "fib_dist_38":   safe(last.get("fib_dist_38")),
+        "fib_dist_50":   safe(last.get("fib_dist_50")),
+        "fib_dist_62":   safe(last.get("fib_dist_62")),
         # Scalars from full-series analysis
         "rsi_divergence":  float(rsi_div),
         "macd_divergence": float(macd_div),
+        # Fibonacci full swing analysis (not stored in DB; used by rule engine)
+        "fib_levels":    fib_data,
         # Pass enriched df for any downstream use
         "enriched_df": enriched,
     }

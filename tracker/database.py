@@ -122,6 +122,10 @@ def _migrate_columns() -> None:
         stock_cols = [r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()]
         if stock_cols and "sector" not in stock_cols:
             conn.execute("ALTER TABLE stocks ADD COLUMN sector TEXT DEFAULT 'General'")
+        if stock_cols and "fib_signal" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN fib_signal INTEGER DEFAULT 0")
+        if stock_cols and "fib_level" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN fib_level TEXT DEFAULT ''")
         # subscribers table
         try:
             sub_cols = [r[1] for r in conn.execute("PRAGMA table_info(subscribers)").fetchall()]
@@ -180,11 +184,13 @@ def upsert_stock(data: dict) -> None:
             INSERT INTO stocks
                 (symbol, price, prev_close, change_pct, volume, avg_volume,
                  rsi, macd, macd_signal, bb_pband, ma20, ma50, ma200,
-                 prediction, prediction_confidence, rule_signals, sector, last_updated)
+                 prediction, prediction_confidence, rule_signals, sector,
+                 fib_signal, fib_level, last_updated)
             VALUES
                 (:symbol, :price, :prev_close, :change_pct, :volume, :avg_volume,
                  :rsi, :macd, :macd_signal, :bb_pband, :ma20, :ma50, :ma200,
-                 :prediction, :prediction_confidence, :rule_signals, :sector, :last_updated)
+                 :prediction, :prediction_confidence, :rule_signals, :sector,
+                 :fib_signal, :fib_level, :last_updated)
             ON CONFLICT(symbol) DO UPDATE SET
                 price=excluded.price, prev_close=excluded.prev_close,
                 change_pct=excluded.change_pct, volume=excluded.volume,
@@ -196,6 +202,8 @@ def upsert_stock(data: dict) -> None:
                 prediction_confidence=excluded.prediction_confidence,
                 rule_signals=excluded.rule_signals,
                 sector=excluded.sector,
+                fib_signal=excluded.fib_signal,
+                fib_level=excluded.fib_level,
                 last_updated=excluded.last_updated
         """, data)
 

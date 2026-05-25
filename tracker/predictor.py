@@ -35,6 +35,8 @@ FEATURE_COLS = [
     "atr_pct",
     # Price position vs MAs
     "price_vs_ma20_pct", "price_vs_ma50_pct",
+    # Fibonacci proximity
+    "fib_pos_120d", "fib_dist_38", "fib_dist_50", "fib_dist_62",
 ]
 
 
@@ -372,6 +374,46 @@ def _rule_signals(ind_data: dict, stock_snap: dict,
     # ── 13. Pre-earnings drift ────────────────────────────────────────────────
     if days_to_earnings is not None and 0 <= days_to_earnings <= 5:
         signals.append({"name": f"Pre-Earnings ({days_to_earnings}d)", "direction": 1, "weight": 1})
+
+    # ── 14. Fibonacci retracement ─────────────────────────────────────────────
+    fib = ind_data.get("fib_levels", {})
+    if fib:
+        fib_sig   = fib.get("signal", 0)
+        fib_level = fib.get("signal_level", "")
+        fib_dist  = fib.get("nearest_dist_pct", 100)
+        fib_trend = fib.get("trend", "")
+        fib_pos   = fib.get("position_pct", 50)
+
+        if fib_sig == 1 and fib_level:
+            # Price at a key Fib support in an uptrend → potential bounce
+            w = 3 if fib_dist < 0.5 else 2
+            signals.append({
+                "name":      f"Fib {fib_level} Support ({fib_dist:.1f}% away)",
+                "direction":  1,
+                "weight":    w,
+            })
+        elif fib_sig == -1 and fib_level:
+            # Price at a key Fib resistance in a downtrend → potential rejection
+            w = 3 if fib_dist < 0.5 else 2
+            signals.append({
+                "name":      f"Fib {fib_level} Resistance ({fib_dist:.1f}% away)",
+                "direction": -1,
+                "weight":    w,
+            })
+
+        # Trend continuation: very high or very low in range
+        if fib_trend == "up" and fib_pos > 80:
+            signals.append({
+                "name":      f"Above Fib 78.6% — Strong Uptrend",
+                "direction":  1,
+                "weight":    1,
+            })
+        elif fib_trend == "down" and fib_pos < 20:
+            signals.append({
+                "name":      f"Below Fib 23.6% — Strong Downtrend",
+                "direction": -1,
+                "weight":    1,
+            })
 
     return signals
 
