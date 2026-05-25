@@ -940,6 +940,9 @@ def create_app() -> Flask:
         if admin_phone:
             sms_ok = sms_mod.send_sms(admin_phone, admin_carrier, sms_text, config)
 
+        # Fan-out to all subscribers (email + SMS per their preferences)
+        counts = alert_mod.notify_subscribers(subject, html, sms_text, set(), config)
+
         ai_sigs  = len([s for s in stocks if s.get("prediction") in ("BULLISH","BEARISH")
                         and (s.get("prediction_confidence") or 0) >= 0.50])
         movers   = min(10, len([s for s in stocks if s.get("change_pct") is not None]))
@@ -950,6 +953,7 @@ def create_app() -> Flask:
             "email": {"status": "sent" if email_ok else "failed", "recipient": recipient},
             "sms":   {"status": "sent" if sms_ok else ("skipped — no admin_phone in config" if not admin_phone else "failed"),
                       "phone": admin_phone or None},
+            "subscribers": {"email_sent": counts["email_sent"], "sms_sent": counts["sms_sent"]},
             "content": {"ai_signals": ai_sigs, "top_movers": movers, "tech_extremes": extremes},
             "sms_preview": sms_text,
         }, indent=2), mimetype="application/json")
