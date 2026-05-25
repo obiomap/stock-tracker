@@ -90,48 +90,128 @@ def send_email(subject: str, html_body: str, config: dict, recipient: str | None
         return False
 
 
-def send_to_subscribers(subject: str, html_body: str, relevant_symbols: set[str], config: dict) -> int:
-    """Email all active subscribers who track at least one relevant symbol."""
-    if not _can_send(config):
-        return 0
+def build_sms_summary(stocks: list[dict], alert_symbols: set[str] | None = None) -> str:
+    """
+    Build a standalone ≤160-char SMS covering the top AI signal, top mover,
+    and any RSI extreme. Works without email — suitable as the sole notification
+    for phone-only subscribers.
+    """
+    pool = [s for s in stocks if not alert_symbols or s["symbol"] in alert_symbols] or stocks
+
+    signals = sorted(
+        [s for s in pool if s.get("prediction") in ("BULLISH", "BEARISH")
+         and (s.get("prediction_confidence") or 0) >= 0.50],
+        key=lambda s: s.get("prediction_confidence") or 0, reverse=True,
+    )
+    movers = sorted(
+        [s for s in pool if s.get("change_pct") is not None],
+        key=lambda s: abs(s.get("change_pct") or 0), reverse=True,
+    )
+    extremes = sorted(
+        [s for s in pool if s.get("rsi") is not None and (s["rsi"] <= 30 or s["rsi"] >= 70)],
+        key=lambda s: abs((s.get("rsi") or 50) - 50), reverse=True,
+    )
+
+    parts: list[str] = ["StockTracker"]
+    if signals:
+        sig  = signals[0]
+        disp = sig["symbol"].replace("-USD", "")
+        conf = int((sig.get("prediction_confidence") or 0) * 100)
+        parts.append(f"{disp} {sig['prediction']} {conf}%")
+    if movers:
+        m    = movers[0]
+        disp = m["symbol"].replace("-USD", "")
+        chg  = m.get("change_pct") or 0
+        parts.append(f"{disp} {chg:+.1f}%")
+    if extremes:
+        ex   = extremes[0]
+        disp = ex["symbol"].replace("-USD", "")
+        rsi  = ex.get("rsi") or 50
+        cond = "OVERSOLD" if rsi <= 30 else "OVERBOUGHT"
+        parts.append(f"{disp} RSI {rsi:.0f} {cond}")
+    parts.append("jpstocktracker.pro")
+    return " | ".join(parts)[:160]
+
+
+def notify_subscribers(
+    subject: str,
+    html_body: str,
+    sms_body: str,
+    relevant_symbols: set[str],
+    config: dict,
+) -> dict[str, int]:
+    """
+    Fan out to all matching subscribers via every channel they have configured.
+
+    Each subscriber is notified independently:
+      • Email — if they have an email address and email delivery is available.
+      • SMS   — if they have a phone number and SMS delivery is available.
+
+    Either channel can succeed or fail without affecting the other.
+    Returns {"email_sent": N, "sms_sent": N}.
+    """
     subscribers = db.get_active_subscribers()
-    sent = 0
+    email_sent  = 0
+    sms_sent    = 0
 
-    if _can_send_resend(config):
-        # Resend: one call per subscriber
-        for sub in subscribers:
-            sub_stocks = set(sub["stocks"])
-            if not sub_stocks or sub_stocks & relevant_symbols:
-                if _send_via_resend(subject, html_body, sub["email"], config):
-                    sent += 1
-        return sent
-
-    # SMTP fallback: reuse connection across subscribers
-    try:
-        conn = _smtp_connection(config)
-    except Exception as e:
-        print(f"[SMTP connect error] {e}")
-        return 0
-    try:
-        for sub in subscribers:
-            sub_stocks = set(sub["stocks"])
-            if not sub_stocks or sub_stocks & relevant_symbols:
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"] = config["email"]["sender"]
-                msg["To"] = sub["email"]
-                msg.attach(MIMEText(html_body, "html"))
-                try:
-                    conn.sendmail(config["email"]["sender"], sub["email"], msg.as_string())
-                    sent += 1
-                except Exception as e:
-                    print(f"[Email error {sub['email']}] {e}")
-    finally:
+    # Build SMTP connection once and reuse across subscribers (skip if Resend is primary)
+    smtp_conn = None
+    use_smtp  = not _can_send_resend(config) and _can_send_smtp(config)
+    if use_smtp:
         try:
-            conn.quit()
-        except Exception:
-            pass
-    return sent
+            smtp_conn = _smtp_connection(config)
+        except Exception as e:
+            print(f"[SMTP connect error] {e}")
+            use_smtp = False
+
+    try:
+        for sub in subscribers:
+            sub_stocks = set(sub["stocks"])
+            # Skip if subscriber tracks specific stocks and none match the alert
+            if sub_stocks and not (sub_stocks & relevant_symbols):
+                continue
+
+            # ── Email channel ──────────────────────────────────────────────
+            email = (sub.get("email") or "").strip()
+            if email:
+                sent_email = False
+                if _can_send_resend(config):
+                    sent_email = _send_via_resend(subject, html_body, email, config)
+                elif use_smtp and smtp_conn:
+                    msg = MIMEMultipart("alternative")
+                    msg["Subject"] = subject
+                    msg["From"]    = config["email"]["sender"]
+                    msg["To"]      = email
+                    msg.attach(MIMEText(html_body, "html"))
+                    try:
+                        smtp_conn.sendmail(config["email"]["sender"], email, msg.as_string())
+                        sent_email = True
+                    except Exception as e:
+                        print(f"[Email error {email}] {e}")
+                if sent_email:
+                    email_sent += 1
+
+            # ── SMS channel ────────────────────────────────────────────────
+            phone   = (sub.get("phone_number") or "").strip()
+            carrier = (sub.get("carrier") or "").strip()
+            if phone:
+                if sms_mod.send_sms(phone, carrier, sms_body, config):
+                    sms_sent += 1
+
+    finally:
+        if smtp_conn:
+            try:
+                smtp_conn.quit()
+            except Exception:
+                pass
+
+    return {"email_sent": email_sent, "sms_sent": sms_sent}
+
+
+def send_to_subscribers(subject: str, html_body: str, relevant_symbols: set[str], config: dict) -> int:
+    """Backward-compat wrapper — prefer notify_subscribers() for new call sites."""
+    counts = notify_subscribers(subject, html_body, "", relevant_symbols, config)
+    return counts["email_sent"]
 
 
 def _html_alert_row(bg: str, label: str, symbol: str, message: str) -> str:
@@ -578,23 +658,28 @@ def build_options_email(new_recs: list[dict]) -> str:
 
 def send_options_alert(new_recs: list[dict], config: dict) -> int:
     """
-    Email subscribers (and admin) about newly-appeared options recommendations.
-    Returns number of subscriber emails sent.
+    Notify subscribers (and admin) about newly-appeared options recommendations.
+    Sends email and/or SMS per subscriber depending on what they have configured.
+    Returns total number of subscribers notified (email + SMS).
     """
-    if not _can_send(config) or not new_recs:
+    if not new_recs:
         return 0
 
     syms    = sorted({r.get("symbol", "") for r in new_recs})
-    subject = f"&#x1F4CA; New Options Signals: {', '.join(syms)}"
+    subject = f"New Options Signals: {', '.join(syms)}"
     html    = build_options_email(new_recs)
+    sms_text = (
+        f"StockTracker Options | {', '.join(syms[:3])}{'...' if len(syms) > 3 else ''}"
+        f" | New call/put signals | jpstocktracker.pro"
+    )[:160]
 
-    # Always notify admin
+    # Admin email
     send_email(subject, html, config)
 
-    # Fan out to subscribers who track any of the relevant symbols
-    sent = send_to_subscribers(subject, html, set(syms), config)
-    print(f"[options alert] emailed admin + {sent} subscriber(s) — {len(new_recs)} new recs")
-    return sent
+    # Subscriber fan-out: email AND/OR SMS
+    counts = notify_subscribers(subject, html, sms_text, set(syms), config)
+    print(f"[options alert] admin notified | subscribers: email={counts['email_sent']} sms={counts['sms_sent']} | {len(new_recs)} recs")
+    return counts["email_sent"] + counts["sms_sent"]
 
 
 def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
@@ -657,18 +742,19 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
 
     if new_alerts:
-        stocks_full   = db.get_all_stocks()
-        earn_full     = db.get_upcoming_earnings()
-        all_alerts    = db.get_recent_alerts(20)
-        html          = build_email_report(stocks_full, earn_full, all_alerts)
-        alerted_syms  = set(a["symbol"] for a in new_alerts)
-        subject       = f"Stock Alert: {', '.join(sorted(alerted_syms))}"
+        stocks_full  = db.get_all_stocks()
+        earn_full    = db.get_upcoming_earnings()
+        all_alerts   = db.get_recent_alerts(20)
+        alerted_syms = set(a["symbol"] for a in new_alerts)
+        subject      = f"Stock Alert: {', '.join(sorted(alerted_syms))}"
+        html         = build_email_report(stocks_full, earn_full, all_alerts)
+        sms_text     = build_sms_summary(stocks_full, alerted_syms)
 
+        # Admin notification (email only — admin has no stored phone in config)
         send_email(subject, html, config)
-        send_to_subscribers(subject, html, alerted_syms, config)
 
-        # SMS fanout
-        sms_msg = subject + " -- check your email for details."
-        sms_mod.send_sms_to_subscribers(sms_msg, alerted_syms, config)
+        # Subscriber fan-out: email AND/OR SMS per subscriber
+        counts = notify_subscribers(subject, html, sms_text, alerted_syms, config)
+        print(f"[alert] {subject} | email={counts['email_sent']} sms={counts['sms_sent']}")
 
     return new_alerts
