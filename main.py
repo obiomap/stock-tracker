@@ -136,18 +136,19 @@ def refresh_all(config: dict) -> None:
 
         # ── Options intelligence refresh ──────────────────────────────────────
         try:
-            _refresh_options(stocks_out)
+            _refresh_options(stocks_out, config)
         except Exception:
             pass
     finally:
         _state["refreshing"] = False
 
 
-def _refresh_options(stocks: list[dict]) -> None:
+def _refresh_options(stocks: list[dict], config: dict) -> None:
     """
     Fetch and score options for the top high-signal stocks.
-    Only runs for BULLISH/BEARISH signals with confidence >= 50%
+    Only runs for BULLISH/BEARISH signals with confidence >= 30%
     on optionable (non-crypto, price >= $5) symbols.
+    Emails subscribers when new contracts appear that weren't in the previous batch.
     """
     MIN_CONF = 0.30   # works with rule-based signals; ML model raises this naturally
 
@@ -159,6 +160,13 @@ def _refresh_options(stocks: list[dict]) -> None:
     ]
 
     print(f"[options] {len(all_signals)} BULL/BEAR signals, {len(candidates)} optionable ≥{MIN_CONF*100:.0f}% conf")
+
+    # Snapshot the current DB recs BEFORE clearing — used to detect new arrivals
+    prev_recs = db.get_option_recs(40)
+    prev_keys = {
+        (r["symbol"], r["opt_type"], float(r["strike"]), r["expiry"])
+        for r in prev_recs
+    }
 
     # Rank by confidence, analyse top 20 to keep refresh time reasonable
     candidates.sort(key=lambda s: s.get("prediction_confidence") or 0, reverse=True)
@@ -186,10 +194,31 @@ def _refresh_options(stocks: list[dict]) -> None:
         time.sleep(0.15)
 
     print(f"[options] total recommendations: {len(all_recs)}")
+
     # Keep top 30 by score, clear old, store new
     all_recs.sort(key=lambda r: r["score"], reverse=True)
+    top_recs = all_recs[:30]
     db.clear_option_recs()
-    db.upsert_option_recs(all_recs[:30])
+    db.upsert_option_recs(top_recs)
+
+    # ── Email alert for genuinely new contracts ────────────────────────────────
+    truly_new = []
+    for r in top_recs:
+        key        = (r["symbol"], r["type"], float(r["strike"]), r["expiry"])
+        alert_type = f"OPTIONS_{r['type']}"       # OPTIONS_CALL or OPTIONS_PUT
+        alert_sym  = f"{r['symbol']}_{r['strike']}_{r['expiry']}"
+        if key not in prev_keys and not db.was_alert_sent_today(alert_type, alert_sym):
+            truly_new.append(r)
+            db.log_alert(alert_type, alert_sym,
+                         f"{r['type']} {r['symbol']} ${r['strike']} exp {r['expiry']} score={r['score']:.0f}",
+                         "HIGH")
+
+    if truly_new:
+        print(f"[options alert] {len(truly_new)} new contract(s) — firing email")
+        try:
+            alert_mod.send_options_alert(truly_new, config)
+        except Exception as e:
+            print(f"[options alert] email error: {e}")
 
 
 # ── dashboard renderers ───────────────────────────────────────────────────────

@@ -238,6 +238,125 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     </body></html>"""
 
 
+def build_options_email(new_recs: list[dict]) -> str:
+    """Build a rich HTML email for newly-appeared options recommendations."""
+    now   = datetime.now().strftime("%Y-%m-%d %H:%M")
+    syms  = sorted({r.get("symbol", "") for r in new_recs})
+    calls = [r for r in new_recs if r.get("type", "").upper() == "CALL"]
+    puts  = [r for r in new_recs if r.get("type", "").upper() == "PUT"]
+
+    def _row(r: dict, bg: str) -> str:
+        opt_t  = r.get("type", "").upper()
+        color  = "#16a34a" if opt_t == "CALL" else "#dc2626"
+        iv_pct = f"{r.get('iv', 0) * 100:.0f}%"
+        score  = r.get("score", 0)
+        score_bg = "#166534" if score >= 70 else "#1e40af" if score >= 50 else "#475569"
+        return f"""
+        <tr style="background:{bg};border-bottom:1px solid #e2e8f0">
+          <td style="padding:10px 12px;font-weight:bold">{r.get('symbol','')}</td>
+          <td style="padding:10px 12px;text-align:center">
+            <span style="background:{color};color:white;padding:2px 8px;
+                         border-radius:4px;font-size:12px;font-weight:bold">{opt_t}</span>
+          </td>
+          <td style="padding:10px 12px;text-align:right">${r.get('current_price', 0):.2f}</td>
+          <td style="padding:10px 12px;text-align:right">${r.get('strike', 0):.2f}</td>
+          <td style="padding:10px 12px;text-align:right">
+            {r.get('expiry','')} <span style="color:#94a3b8">({r.get('days_out',0)}d)</span>
+          </td>
+          <td style="padding:10px 12px;text-align:right">
+            ${r.get('bid', 0):.2f}&nbsp;/&nbsp;${r.get('ask', 0):.2f}
+          </td>
+          <td style="padding:10px 12px;text-align:right">{iv_pct}</td>
+          <td style="padding:10px 12px;text-align:right">{int(r.get('open_interest', 0)):,}</td>
+          <td style="padding:10px 12px;text-align:right">{int(r.get('volume', 0)):,}</td>
+          <td style="padding:10px 12px;text-align:center">
+            <span style="background:{score_bg};color:white;padding:2px 8px;
+                         border-radius:4px;font-weight:bold">{score:.0f}</span>
+          </td>
+          <td style="padding:10px 12px;color:#64748b;font-size:13px">{r.get('reason','')}</td>
+        </tr>"""
+
+    _THEAD = """
+        <tr style="background:#1e3a8a;color:white;font-size:12px">
+          <th style="padding:8px 12px;text-align:left">Symbol</th>
+          <th style="padding:8px 12px;text-align:center">Type</th>
+          <th style="padding:8px 12px;text-align:right">Stock&nbsp;Price</th>
+          <th style="padding:8px 12px;text-align:right">Strike</th>
+          <th style="padding:8px 12px;text-align:right">Expiry</th>
+          <th style="padding:8px 12px;text-align:right">Bid&nbsp;/&nbsp;Ask</th>
+          <th style="padding:8px 12px;text-align:right">IV</th>
+          <th style="padding:8px 12px;text-align:right">OI</th>
+          <th style="padding:8px 12px;text-align:right">Vol</th>
+          <th style="padding:8px 12px;text-align:center">Score</th>
+          <th style="padding:8px 12px;text-align:left">Signal Reason</th>
+        </tr>"""
+
+    def _section(recs: list[dict], title: str, color: str, emoji: str) -> str:
+        if not recs:
+            return ""
+        rows = "".join(_row(r, "#fff" if i % 2 == 0 else "#f8fafc") for i, r in enumerate(recs))
+        return f"""
+        <h3 style="color:{color};margin:24px 0 8px">{emoji} {title} &mdash; {len(recs)} new</h3>
+        <table border="0" cellspacing="0" cellpadding="0"
+               style="border-collapse:collapse;width:100%;border-radius:12px;
+                      overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+          {_THEAD}{rows}
+        </table>"""
+
+    calls_html = _section(calls, "CALL Recommendations", "#16a34a", "&#x1F4C8;")
+    puts_html  = _section(puts,  "PUT Recommendations",  "#dc2626", "&#x1F4C9;")
+
+    return f"""
+<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                   max-width:1000px;margin:auto;background:#f8fafc;padding:24px">
+<div style="background:linear-gradient(135deg,#020617,#1e1b4b);color:white;
+            border-radius:16px;padding:28px 32px;margin-bottom:24px">
+  <h2 style="margin:0 0 4px">&#x1F4CA; New Options Recommendations</h2>
+  <p style="margin:0;opacity:.7;font-size:14px">
+    {now} &bull; {len(new_recs)} new signal{'s' if len(new_recs) != 1 else ''} for {', '.join(syms)}
+  </p>
+</div>
+
+{calls_html}
+{puts_html}
+
+<div style="margin-top:24px;padding:16px;background:white;border-radius:12px;
+            border-left:4px solid #3b82f6;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+  <p style="margin:0;font-size:13px;color:#64748b">
+    &#x2139;&#xFE0F; <strong>Scores</strong> (0&ndash;100) reflect liquidity and strike placement.
+    View live &rarr; <a href="https://jpstocktracker.pro/#options"
+                        style="color:#3b82f6">jpstocktracker.pro</a>.
+    Not financial advice.
+  </p>
+</div>
+
+<p style="color:#94a3b8;font-size:12px;margin-top:24px;text-align:center">
+  Stock Tracker &bull; {now} &bull; Unsubscribe via your alert settings
+</p>
+</body></html>"""
+
+
+def send_options_alert(new_recs: list[dict], config: dict) -> int:
+    """
+    Email subscribers (and admin) about newly-appeared options recommendations.
+    Returns number of subscriber emails sent.
+    """
+    if not _can_send(config) or not new_recs:
+        return 0
+
+    syms    = sorted({r.get("symbol", "") for r in new_recs})
+    subject = f"&#x1F4CA; New Options Signals: {', '.join(syms)}"
+    html    = build_options_email(new_recs)
+
+    # Always notify admin
+    send_email(subject, html, config)
+
+    # Fan out to subscribers who track any of the relevant symbols
+    sent = send_to_subscribers(subject, html, set(syms), config)
+    print(f"[options alert] emailed admin + {sent} subscriber(s) — {len(new_recs)} new recs")
+    return sent
+
+
 def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                           predictions: dict, config: dict) -> list[dict]:
     alert_cfg = config.get("alerts", {})
