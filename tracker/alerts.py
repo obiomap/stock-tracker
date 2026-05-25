@@ -144,98 +144,184 @@ def _html_alert_row(bg: str, label: str, symbol: str, message: str) -> str:
 
 
 def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[dict]) -> str:
+    """
+    Build the subscriber alert email containing exactly three sections:
+      1. AI Top Signals       — high-confidence BULLISH / BEARISH predictions
+      2. Today's Top Movers   — biggest % gainers and losers
+      3. Technical Extremes   — RSI overbought (≥70) or oversold (≤30)
+    """
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    def chg_color(v):
-        if v is None: return "gray"
+    def chg_color(v: float | None) -> str:
+        if v is None: return "#94a3b8"
         return "#22c55e" if v >= 0 else "#ef4444"
 
-    def sig_color(s):
-        return {"BULLISH": "#22c55e", "BEARISH": "#ef4444"}.get(s, "#f59e0b")
+    def fmt_price(v) -> str:
+        if v is None: return "—"
+        return f"${float(v):,.2f}"
 
-    rows_stocks = ""
-    for s in stocks:
-        chg = s.get("change_pct", 0) or 0
-        pred = s.get("prediction", "N/A")
-        conf = s.get("prediction_confidence", 0) or 0
-        display = s["symbol"].replace("-USD", "")
-        rows_stocks += f"""
-        <tr>
-            <td style="padding:8px;font-weight:bold">{display}</td>
-            <td style="padding:8px">${s.get('price','N/A')}</td>
-            <td style="padding:8px;color:{chg_color(chg)}">{chg:+.2f}%</td>
-            <td style="padding:8px">{s.get('rsi','N/A')}</td>
-            <td style="padding:8px;color:{sig_color(pred)};font-weight:bold">{pred}</td>
-            <td style="padding:8px">{conf*100:.0f}%</td>
-        </tr>"""
+    def fmt_rsi(v) -> str:
+        return f"{float(v):.1f}" if v is not None else "—"
 
-    rows_earnings = ""
-    for e in earnings[:10]:
-        rxn = e.get("avg_reaction_pct")
-        rxn_str = f"{rxn:+.1f}%" if rxn is not None else "N/A"
-        rows_earnings += f"""
-        <tr>
-            <td style="padding:8px;font-weight:bold">{e['symbol']}</td>
-            <td style="padding:8px">{e['earnings_date']}</td>
-            <td style="padding:8px">{e['days_until']}d</td>
-            <td style="padding:8px">{rxn_str}</td>
-        </tr>"""
+    # ── Section builder ───────────────────────────────────────────────────────
+    def _th(label: str, align: str = "left") -> str:
+        return (f'<th style="padding:10px 14px;text-align:{align};color:#64748b;'
+                f'font-size:11px;font-weight:600;text-transform:uppercase;'
+                f'letter-spacing:.06em;background:#0f172a;border-bottom:1px solid #1e293b">'
+                f'{label}</th>')
 
-    rows_alerts = ""
-    for a in alerts[:15]:
-        bg = {"HIGH": "#fef2f2", "MEDIUM": "#fffbeb", "LOW": "#f0fdf4"}.get(a.get("severity", ""), "white")
-        rows_alerts += _html_alert_row(bg, a.get("severity", ""), a.get("symbol", ""), a.get("message", ""))
-
-    return f"""
-    <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-                       max-width:900px;margin:auto;background:#f8fafc;padding:24px">
-    <div style="background:linear-gradient(135deg,#020617,#1e1b4b);color:white;
-                border-radius:16px;padding:28px 32px;margin-bottom:24px">
-      <h2 style="margin:0 0 4px">&#x1F4C8; Stock Tracker Report</h2>
-      <p style="margin:0;opacity:.7;font-size:14px">{now}</p>
-    </div>
-
-    <h3 style="color:#1e293b">Watchlist</h3>
+    def _section(icon: str, title: str, header_cells: str, data_rows: str) -> str:
+        return f"""
+  <div style="margin-bottom:28px">
+    <h3 style="margin:0 0 10px;color:#f1f5f9;font-size:15px;font-weight:700;
+               display:flex;align-items:center;gap:8px">
+      <span style="background:rgba(99,102,241,.2);border:1px solid rgba(99,102,241,.35);
+                   padding:3px 10px;border-radius:6px;font-size:13px">{icon}</span>
+      {title}
+    </h3>
     <table border="0" cellspacing="0" cellpadding="0"
-           style="border-collapse:collapse;width:100%;border-radius:12px;
-                  overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
-        <tr style="background:#1e3a8a;color:white">
-            <th style="padding:10px 12px;text-align:left">Symbol</th>
-            <th style="padding:10px 12px;text-align:right">Price</th>
-            <th style="padding:10px 12px;text-align:right">Change</th>
-            <th style="padding:10px 12px;text-align:center">RSI</th>
-            <th style="padding:10px 12px;text-align:center">Signal</th>
-            <th style="padding:10px 12px;text-align:right">Confidence</th>
-        </tr>{rows_stocks}
+           style="border-collapse:collapse;width:100%;border-radius:10px;
+                  overflow:hidden;background:#1e293b;border:1px solid #334155">
+      <tr>{header_cells}</tr>
+      {data_rows}
     </table>
+  </div>"""
 
-    <h3 style="color:#1e293b">Upcoming Earnings</h3>
-    <table border="0" cellspacing="0" cellpadding="0"
-           style="border-collapse:collapse;width:100%;border-radius:12px;
-                  overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
-        <tr style="background:#1e3a8a;color:white">
-            <th style="padding:10px 12px;text-align:left">Symbol</th>
-            <th style="padding:10px 12px;text-align:left">Date</th>
-            <th style="padding:10px 12px;text-align:center">Days</th>
-            <th style="padding:10px 12px;text-align:right">Avg Reaction</th>
-        </tr>{rows_earnings}
-    </table>
+    def _empty_row(cols: int, msg: str = "No data for today") -> str:
+        return (f'<tr><td colspan="{cols}" style="padding:14px;color:#475569;'
+                f'text-align:center;font-size:13px">{msg}</td></tr>')
 
-    <h3 style="color:#1e293b">Active Alerts</h3>
-    <table border="0" cellspacing="0" cellpadding="0"
-           style="border-collapse:collapse;width:100%;border-radius:12px;
-                  overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12)">
-        <tr style="background:#1e3a8a;color:white">
-            <th style="padding:10px 12px;text-align:left">Level</th>
-            <th style="padding:10px 12px;text-align:left">Symbol</th>
-            <th style="padding:10px 12px;text-align:left">Message</th>
-        </tr>{rows_alerts}
-    </table>
+    # ── 1. AI TOP SIGNALS ─────────────────────────────────────────────────────
+    sig_color = {"BULLISH": "#22c55e", "BEARISH": "#ef4444"}
+    sig_bg    = {"BULLISH": "#14532d", "BEARISH": "#7f1d1d"}
 
-    <p style="color:#94a3b8;font-size:12px;margin-top:24px;text-align:center">
-      Generated by Stock Tracker &bull; {now} &bull; Unsubscribe via your alert email link
-    </p>
-    </body></html>"""
+    ai_stocks = [
+        s for s in stocks
+        if s.get("prediction") in ("BULLISH", "BEARISH")
+        and (s.get("prediction_confidence") or 0) >= 0.50
+    ]
+    ai_stocks.sort(key=lambda s: s.get("prediction_confidence") or 0, reverse=True)
+
+    rows_ai = ""
+    for s in ai_stocks[:15]:
+        chg  = s.get("change_pct") or 0
+        pred = s.get("prediction", "NEUTRAL")
+        conf = s.get("prediction_confidence") or 0
+        disp = s["symbol"].replace("-USD", "")
+        alt  = "#172033" if ai_stocks.index(s) % 2 else "#1e293b"
+        rows_ai += (
+            f'<tr style="background:{alt}">'
+            f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
+            f'<td style="padding:10px 14px;text-align:right;color:#e2e8f0">{fmt_price(s.get("price"))}</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:{chg_color(chg)};font-weight:600">{chg:+.2f}%</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:#cbd5e1">{fmt_rsi(s.get("rsi"))}</td>'
+            f'<td style="padding:10px 14px;text-align:center">'
+            f'<span style="background:{sig_bg.get(pred,"#1e293b")};color:{sig_color.get(pred,"#94a3b8")};'
+            f'padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700">{pred}</span></td>'
+            f'<td style="padding:10px 14px;text-align:right;font-weight:700;color:#f1f5f9">{conf*100:.0f}%</td>'
+            f'</tr>'
+        )
+    if not rows_ai:
+        rows_ai = _empty_row(6, "No high-confidence signals today — check back after market close")
+
+    hdr_ai = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
+              _th("RSI", "center") + _th("Signal", "center") + _th("Confidence", "right"))
+    sec_ai = _section("&#x1F916;", "AI Top Signals", hdr_ai, rows_ai)
+
+    # ── 2. TODAY'S TOP MOVERS ─────────────────────────────────────────────────
+    movers = [s for s in stocks if s.get("change_pct") is not None and s.get("price")]
+    movers.sort(key=lambda s: abs(s.get("change_pct") or 0), reverse=True)
+
+    rows_movers = ""
+    for i, s in enumerate(movers[:10]):
+        chg  = s.get("change_pct") or 0
+        disp = s["symbol"].replace("-USD", "")
+        vol  = s.get("volume") or 0
+        avg  = max(s.get("avg_volume") or 1, 1)
+        vol_str = f"{vol / avg:.1f}×" if avg > 0 else "—"
+        arrow = "▲" if chg >= 0 else "▼"
+        alt  = "#172033" if i % 2 else "#1e293b"
+        rows_movers += (
+            f'<tr style="background:{alt}">'
+            f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
+            f'<td style="padding:10px 14px;text-align:right;color:#e2e8f0">{fmt_price(s.get("price"))}</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:{chg_color(chg)};'
+            f'font-weight:700;font-size:15px">{arrow} {abs(chg):.2f}%</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:#94a3b8;font-size:13px">{vol_str}</td>'
+            f'</tr>'
+        )
+    if not rows_movers:
+        rows_movers = _empty_row(4)
+
+    hdr_movers = (_th("Symbol") + _th("Price", "right") +
+                  _th("Move", "center") + _th("Vol vs Avg", "center"))
+    sec_movers = _section("&#x1F525;", "Today's Top Movers", hdr_movers, rows_movers)
+
+    # ── 3. TECHNICAL EXTREMES ─────────────────────────────────────────────────
+    extremes = [
+        s for s in stocks
+        if s.get("rsi") is not None and s.get("price")
+        and (s["rsi"] <= 30 or s["rsi"] >= 70)
+    ]
+    extremes.sort(key=lambda s: abs((s.get("rsi") or 50) - 50), reverse=True)
+
+    rows_ext = ""
+    for i, s in enumerate(extremes[:12]):
+        rsi  = s.get("rsi") or 50
+        disp = s["symbol"].replace("-USD", "")
+        chg  = s.get("change_pct") or 0
+        alt  = "#172033" if i % 2 else "#1e293b"
+        if rsi <= 30:
+            label, lbl_color, lbl_bg = "OVERSOLD",   "#22c55e", "#14532d"
+        else:
+            label, lbl_color, lbl_bg = "OVERBOUGHT", "#ef4444", "#7f1d1d"
+        rows_ext += (
+            f'<tr style="background:{alt}">'
+            f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
+            f'<td style="padding:10px 14px;text-align:right;color:#e2e8f0">{fmt_price(s.get("price"))}</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:#f1f5f9">{fmt_rsi(rsi)}</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:{chg_color(chg)};font-weight:600">{chg:+.2f}%</td>'
+            f'<td style="padding:10px 14px;text-align:center">'
+            f'<span style="background:{lbl_bg};color:{lbl_color};padding:3px 10px;'
+            f'border-radius:4px;font-size:12px;font-weight:700">{label}</span></td>'
+            f'</tr>'
+        )
+    if not rows_ext:
+        rows_ext = _empty_row(5, "No RSI extremes today — market conditions are neutral")
+
+    hdr_ext = (_th("Symbol") + _th("Price", "right") + _th("RSI", "center") +
+               _th("Change", "center") + _th("Condition", "center"))
+    sec_ext = _section("&#x26A1;", "Technical Extremes", hdr_ext, rows_ext)
+
+    # ── Assemble email ────────────────────────────────────────────────────────
+    return f"""<!DOCTYPE html>
+<html>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+             max-width:680px;margin:auto;background:#020617;padding:20px 16px;color:#e2e8f0">
+
+  <!-- Header -->
+  <div style="background:linear-gradient(135deg,#0f172a,#1e1b4b);
+              border:1px solid rgba(99,102,241,.35);border-radius:14px;
+              padding:24px 28px;margin-bottom:24px;text-align:center">
+    <div style="font-size:26px;margin-bottom:6px">&#x1F4C8;</div>
+    <h2 style="margin:0 0 4px;color:#fff;font-size:20px;font-weight:800;letter-spacing:-.02em">
+      Stock Tracker Alerts
+    </h2>
+    <p style="margin:0;color:#64748b;font-size:13px">{now} UTC</p>
+  </div>
+
+  {sec_ai}
+  {sec_movers}
+  {sec_ext}
+
+  <!-- Footer -->
+  <p style="color:#334155;font-size:11px;margin-top:20px;text-align:center;line-height:1.7">
+    Stock Tracker &bull; {now} UTC &bull; Prices delayed ~15 min<br>
+    <a href="https://jpstocktracker.pro/unsubscribe" style="color:#4f46e5">Unsubscribe</a>
+  </p>
+
+</body>
+</html>"""
 
 
 def _payoff_svg(opt_type: str, strike: float, current_price: float,

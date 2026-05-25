@@ -902,6 +902,16 @@ def create_app() -> Flask:
             return Response(_json.dumps({"status": "error", "message": str(e)}),
                             mimetype="application/json")
 
+    @_app.route("/test-alert-email")
+    def test_alert_email():
+        """Preview the subscriber alert email HTML using live DB data. Admin use only."""
+        from . import alerts as alert_mod
+        stocks   = db.get_all_stocks()
+        earnings = db.get_upcoming_earnings()
+        alerts   = db.get_recent_alerts(20)
+        html     = alert_mod.build_email_report(stocks, earnings, alerts)
+        return Response(html, mimetype="text/html")
+
     @_app.route("/status")
     def status():
         import json as _json
