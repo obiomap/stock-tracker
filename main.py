@@ -146,15 +146,20 @@ def refresh_all(config: dict) -> None:
 def _refresh_options(stocks: list[dict]) -> None:
     """
     Fetch and score options for the top high-signal stocks.
-    Only runs for BULLISH/BEARISH signals with confidence >= 55%
+    Only runs for BULLISH/BEARISH signals with confidence >= 50%
     on optionable (non-crypto, price >= $5) symbols.
     """
-    candidates = [
-        s for s in stocks
-        if s.get("prediction") in ("BULLISH", "BEARISH")
-        and (s.get("prediction_confidence") or 0) >= 0.55
+    MIN_CONF = 0.50   # lowered from 0.55 so rule-based signals qualify too
+
+    all_signals = [s for s in stocks if s.get("prediction") in ("BULLISH", "BEARISH")]
+    candidates  = [
+        s for s in all_signals
+        if (s.get("prediction_confidence") or 0) >= MIN_CONF
         and opt_mod.is_optionable(s["symbol"], s.get("price") or 0)
     ]
+
+    print(f"[options] {len(all_signals)} BULL/BEAR signals, {len(candidates)} optionable ≥{MIN_CONF*100:.0f}% conf")
+
     # Rank by confidence, analyse top 20 to keep refresh time reasonable
     candidates.sort(key=lambda s: s.get("prediction_confidence") or 0, reverse=True)
     candidates = candidates[:20]
@@ -171,11 +176,14 @@ def _refresh_options(stocks: list[dict]) -> None:
                 macd=s.get("macd"),
                 change_pct=s.get("change_pct"),
             )
+            if recs:
+                print(f"[options] {s['symbol']} → {len(recs)} {s['prediction']} recs (score {recs[0]['score']:.0f})")
             all_recs.extend(recs)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[options] {s['symbol']} error: {e}")
         time.sleep(0.15)
 
+    print(f"[options] total recommendations: {len(all_recs)}")
     # Keep top 30 by score, clear old, store new
     all_recs.sort(key=lambda r: r["score"], reverse=True)
     db.clear_option_recs()

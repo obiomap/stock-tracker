@@ -751,6 +751,26 @@ def create_app() -> Flask:
 
     # ── status / debug ────────────────────────────────────────────────────────
 
+    @_app.route("/debug-options")
+    def debug_options():
+        import json as _json
+        stocks = db.get_all_stocks()
+        signals = [
+            {"symbol": s["symbol"], "price": s.get("price"), "prediction": s.get("prediction"),
+             "confidence": round(s.get("prediction_confidence") or 0, 3)}
+            for s in stocks
+            if s.get("prediction") in ("BULLISH", "BEARISH")
+        ]
+        signals.sort(key=lambda x: x["confidence"], reverse=True)
+        opt_recs = db.get_option_recs(40)
+        return Response(_json.dumps({
+            "total_stocks": len(stocks),
+            "bullish_bearish_signals": len(signals),
+            "top_signals": signals[:30],
+            "options_recs_in_db": len(opt_recs),
+            "options_recs": opt_recs[:10],
+        }, indent=2), mimetype="application/json")
+
     @_app.route("/status")
     def status():
         import json as _json
