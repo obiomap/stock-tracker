@@ -771,6 +771,32 @@ def create_app() -> Flask:
             "options_recs": opt_recs[:10],
         }, indent=2), mimetype="application/json")
 
+    @_app.route("/test-options-email")
+    def test_options_email():
+        """Force-send a test options alert email using current DB recs. Admin use only."""
+        import json as _json
+        from . import alerts as alert_mod
+        config = cfg_mod.load_config()
+        recs = db.get_option_recs(10)
+        if not recs:
+            return Response(_json.dumps({"status": "no_recs", "message": "No options recs in DB yet."}),
+                            mimetype="application/json")
+        # Convert DB field names (opt_type) to the alert builder's expected field name (type)
+        for r in recs:
+            r.setdefault("type", r.get("opt_type", ""))
+            r.setdefault("last", r.get("last_price", 0))
+        try:
+            sent = alert_mod.send_options_alert(recs, config)
+            return Response(_json.dumps({
+                "status": "sent",
+                "recs_included": len(recs),
+                "subscribers_notified": sent,
+                "symbols": sorted({r["symbol"] for r in recs}),
+            }, indent=2), mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"status": "error", "message": str(e)}),
+                            mimetype="application/json")
+
     @_app.route("/status")
     def status():
         import json as _json
