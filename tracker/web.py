@@ -1405,6 +1405,10 @@ def create_app() -> Flask:
                 last_str= f"${last:.2f}" if last else "—"
                 days_str= f"{days}d" if days else "—"
 
+                chart_url = (
+                    f"/option-chart.png?t={opt_type}"
+                    f"&k={strike}&p={cprice}&b={bid}&a={ask}"
+                )
                 rows += (
                     f'<tr>'
                     f'<td class="opt-sym">{sec_mod.display_symbol(sym)}</td>'
@@ -1420,6 +1424,11 @@ def create_app() -> Flask:
                     f'<td style="text-align:right"><span class="opt-score {sc_cls}">{sc:.0f}</span></td>'
                     f'<td class="opt-reason">{reason}</td>'
                     f'</tr>'
+                    f'<tr style="background:rgba(0,0,0,.25)">'
+                    f'<td colspan="12" style="padding:8px 14px 12px">'
+                    f'<img src="{chart_url}" alt="Payoff chart" '
+                    f'style="display:block;border-radius:6px;max-width:572px;height:auto"/>'
+                    f'</td></tr>'
                 )
             return rows
 
@@ -1853,16 +1862,17 @@ def create_app() -> Flask:
   }});
 }})();
 
-// ── Options Intelligence tab switcher ────────────────────────────────────
-function optSwitch(tab) {{
+}})();
+
+// ── Options Intelligence tab switcher (global scope) ─────────────────────
+window.optSwitch = function(tab) {{
   document.getElementById('optPanelCall').classList.toggle('active', tab === 'call');
   document.getElementById('optPanelPut').classList.toggle('active',  tab === 'put');
   var tc = document.getElementById('optTabCall');
   var tp = document.getElementById('optTabPut');
   if(tc) {{ tc.className = 'opt-tab' + (tab==='call' ? ' active-call' : ''); }}
   if(tp) {{ tp.className = 'opt-tab' + (tab==='put'  ? ' active-put'  : ''); }}
-}}
-}})();
+}};
 </script>
 """
         )
