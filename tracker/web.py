@@ -1427,7 +1427,8 @@ def create_app() -> Flask:
                     f'<tr style="background:rgba(0,0,0,.25)">'
                     f'<td colspan="12" style="padding:8px 14px 12px">'
                     f'<img src="{chart_url}" alt="Payoff chart" '
-                    f'style="display:block;border-radius:6px;max-width:572px;height:auto"/>'
+                    f'width="572" height="149" '
+                    f'style="display:block;border-radius:6px;max-width:100%;height:auto"/>'
                     f'</td></tr>'
                 )
             return rows
