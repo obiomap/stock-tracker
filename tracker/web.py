@@ -1863,8 +1863,6 @@ def create_app() -> Flask:
   }});
 }})();
 
-}})();
-
 // ── Options Intelligence tab switcher (global scope) ─────────────────────
 window.optSwitch = function(tab) {{
   document.getElementById('optPanelCall').classList.toggle('active', tab === 'call');
