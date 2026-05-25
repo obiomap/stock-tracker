@@ -119,6 +119,17 @@ DEFAULT_CONFIG = {
         # Commodities & Mining
         "FCX", "AA", "CLF", "NEM", "AEM",                  # Copper, Aluminium, Steel, Gold miners
         "WPM", "GOLD", "MP", "RS",                          # Silver streams, Gold, Rare earth, Metals dist.
+        # Nuclear & Energy Transition
+        "CEG", "VST", "NRG",                                # Power generators (nuclear + gas, AI data center demand)
+        "CCJ", "LEU",                                       # Uranium miners
+        # AI Infrastructure
+        "HPE", "NTAP", "PSTG",                              # Servers, storage, all-flash arrays
+        # Defense Primes
+        "NOC", "GD", "HII",                                 # Northrop, General Dynamics, Huntington Ingalls
+        # Fintech additions
+        "UPST",                                             # Upstart — AI-powered consumer lending platform
+        # Small-Cap Growth / Aerospace
+        "LUNR", "JOBY", "ACHR",                             # Lunar missions, eVTOL air taxis
     ],
     "stock_sectors": {
         # Cybersecurity
@@ -257,6 +268,18 @@ DEFAULT_CONFIG = {
         "AEM":   "Commodities & Mining", "WPM":  "Commodities & Mining",
         "GOLD":  "Commodities & Mining", "MP":   "Commodities & Mining",
         "RS":    "Commodities & Mining",
+        # Nuclear & Energy Transition
+        "CEG":   "Energy & Clean Energy", "VST":  "Energy & Clean Energy",
+        "NRG":   "Energy & Clean Energy",
+        "CCJ":   "Commodities & Mining",  "LEU":  "Commodities & Mining",
+        # AI Infrastructure
+        "HPE":   "Technology", "NTAP":  "Technology", "PSTG":  "Technology",
+        # Defense Primes
+        "NOC":   "Industrials", "GD":   "Industrials", "HII":   "Industrials",
+        # Fintech
+        "UPST":  "Fintech",
+        # Small-Cap Growth / Aerospace
+        "LUNR":  "Industrials", "JOBY":  "Industrials", "ACHR":  "Industrials",
     },
     "industry_etfs": {
         "Technology": "XLK",
