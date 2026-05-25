@@ -45,8 +45,10 @@ DEFAULT_CONFIG = {
         "DOGE-USD", "SHIB-USD", "PEPE24478-USD", "WIF-USD", "BONK-USD", "FLOKI-USD",
         # Real Estate (REITs)
         "AMT", "PLD", "EQIX", "O", "VICI", "SPG",
-        # Industrials
+        # Industrials / Defense
         "CAT", "BA", "GE", "HON", "UPS", "FDX", "LMT", "RTX",
+        # Defense & Space Tech
+        "LHX", "CACI", "LDOS", "AXON", "RKLB", "ASTS",
         # High-growth / AI plays
         "PLTR", "IONQ", "RGTI", "QUBT", "QBTS", "SHOP",
         "SMCI", "DDOG", "RBLX", "RDDT", "HIMS",
@@ -112,6 +114,8 @@ DEFAULT_CONFIG = {
         "TOST", "GTLB", "RELY",                             # Restaurant OS, DevSecOps, Remittance fintech
         # Healthcare & Biotech additions
         "HCA", "CI", "CVS",                                 # Hospital systems, Health insurance, Pharmacy
+        # High-growth Biotech additions
+        "VRTX", "BIIB", "ILMN", "DXCM", "GEHC", "INCY",   # Vertex, Biogen, Illumina, Dexcom, GE HealthCare, Incyte
         # Commodities & Mining
         "FCX", "AA", "CLF", "NEM", "AEM",                  # Copper, Aluminium, Steel, Gold miners
         "WPM", "GOLD", "MP", "RS",                          # Silver streams, Gold, Rare earth, Metals dist.
@@ -240,6 +244,13 @@ DEFAULT_CONFIG = {
         # Healthcare additions
         "HCA":   "Healthcare & Biotech", "CI": "Healthcare & Biotech",
         "CVS":   "Healthcare & Biotech",
+        # Defense & Space Tech
+        "LHX":   "Industrials", "CACI":  "Industrials", "LDOS":  "Industrials",
+        "AXON":  "Industrials", "RKLB":  "Industrials", "ASTS":  "Industrials",
+        # High-growth Biotech
+        "VRTX":  "Healthcare & Biotech", "BIIB":  "Healthcare & Biotech",
+        "ILMN":  "Healthcare & Biotech", "DXCM":  "Healthcare & Biotech",
+        "GEHC":  "Healthcare & Biotech", "INCY":  "Healthcare & Biotech",
         # Commodities & Mining
         "FCX":   "Commodities & Mining", "AA":   "Commodities & Mining",
         "CLF":   "Commodities & Mining", "NEM":  "Commodities & Mining",
