@@ -48,6 +48,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "AI":   "C3.ai — enterprise AI software applications",
             "SOUN": "SoundHound — voice AI for automotive and restaurants",
             "BBAI": "BigBear.ai — defense and intelligence AI",
+            "PATH": "UiPath — robotic process automation (RPA) and AI workflows",
         },
     },
     "Technology": {
@@ -85,6 +86,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "APP":   "AppLovin — AI-powered mobile app growth and advertising",
             "MSTR":  "MicroStrategy — largest corporate Bitcoin holder + analytics BI",
             "DUOL":  "Duolingo — AI-powered language learning app, 97M daily users",
+            "MNDY":  "Monday.com — AI-powered work management and project collaboration platform",
         },
     },
     "Semiconductors": {
@@ -163,6 +165,12 @@ SECTOR_CATALOG: dict[str, dict] = {
             "DXCM": "Dexcom — continuous glucose monitors (CGM) for diabetes management",
             "GEHC": "GE HealthCare — medical imaging, ultrasound, and patient monitoring",
             "INCY": "Incyte — JAK inhibitor oncology drugs (Jakafi, Opzelura)",
+            "BSX":  "Boston Scientific — cardiovascular, neuromodulation, and urology devices",
+            "SYK":  "Stryker — orthopedic implants, Mako surgical robots, and med-surg equipment",
+            "PODD": "Insulet — OmniPod tubeless insulin pump; largest addressable diabetes market",
+            "REGN": "Regeneron — Dupixent (blockbuster biologic), Eylea, and oncology pipeline",
+            "MRNA": "Moderna — mRNA platform; COVID vaccine + oncology and rare disease pipeline",
+            "GILD": "Gilead Sciences — HIV antivirals (Biktarvy), oncology, and liver disease drugs",
         },
     },
     "Quantum Computing": {
@@ -261,6 +269,10 @@ SECTOR_CATALOG: dict[str, dict] = {
             "MS":    "Morgan Stanley — wealth management and investment banking",
             "C":     "Citigroup — global banking with large international footprint",
             "SCHW":  "Charles Schwab — retail brokerage and asset management",
+            "PGR":   "Progressive — fastest-growing US auto insurer; usage-based Snapshot telematics",
+            "CB":    "Chubb — world's largest publicly traded P&C insurer; commercial and specialty lines",
+            "AFL":   "Aflac — supplemental insurance leader; 50%+ Japan market share",
+            "MET":   "MetLife — global life insurance, annuities, and employee benefits",
         },
     },
     "Fintech": {
@@ -280,6 +292,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "AFRM": "Affirm — buy-now-pay-later (BNPL) for e-commerce",
             "UPST": "Upstart — AI-powered personal loan underwriting platform",
             "ADYEY":"Adyen — global payment processing for enterprise (Spotify, Netflix)",
+            "NU":   "Nubank — Brazil/LatAm digital bank; 100M+ customers, most profitable neobank",
         },
     },
     "Energy & Clean Energy": {
@@ -302,6 +315,8 @@ SECTOR_CATALOG: dict[str, dict] = {
             "ENPH": "Enphase Energy — residential solar microinverters",
             "FSLR": "First Solar — utility-scale thin-film solar panels",
             "PLUG": "Plug Power — hydrogen fuel cells and electrolyzers",
+            "EQT":  "EQT Corp — largest US natural gas producer; Appalachian Basin operations",
+            "AR":   "Antero Resources — natural gas and NGL producer; low-cost Appalachian assets",
         },
     },
     "Consumer": {
@@ -330,6 +345,9 @@ SECTOR_CATALOG: dict[str, dict] = {
             "SPOT": "Spotify — global audio streaming leader, 600M+ users",
             "CELH": "Celsius Holdings — fastest-growing energy drink brand in the US",
             "MELI": "MercadoLibre — Latin America's e-commerce + fintech giant",
+            "LULU": "Lululemon — premium athletic apparel; strong DTC and international growth",
+            "TJX":  "TJX Companies — off-price retail (TJ Maxx, Marshalls); recession-resilient",
+            "MNST": "Monster Beverage — #2 energy drink globally; high-margin royalty model with COKE",
         },
     },
     "Penny Stocks": {
@@ -422,6 +440,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "VALE":  "Vale — world's largest iron ore and nickel miner (Brazil)",
             "ITUB":  "Itaú Unibanco — largest bank in Latin America",
             "EWZ":   "iShares MSCI Brazil ETF — broad Brazil large-cap exposure",
+            "GLOB":  "Globant — LatAm IT services and digital transformation; Disney, Google clients",
         },
     },
     "Asian Markets": {

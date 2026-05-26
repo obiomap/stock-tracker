@@ -130,6 +130,20 @@ DEFAULT_CONFIG = {
         "UPST",                                             # Upstart — AI-powered consumer lending platform
         # Small-Cap Growth / Aerospace
         "LUNR", "JOBY", "ACHR",                             # Lunar missions, eVTOL air taxis
+        # Medical Devices
+        "BSX", "SYK", "PODD",                               # Boston Scientific, Stryker, Insulet
+        # Insurance
+        "PGR", "CB", "AFL", "MET",                          # Progressive, Chubb, Aflac, MetLife
+        # Digital Banking / LatAm
+        "NU", "GLOB",                                        # Nubank, Globant
+        # AI & Automation Software
+        "PATH", "MNDY",                                      # UiPath, Monday.com
+        # Pharma / Biotech gaps
+        "REGN", "MRNA", "GILD",                             # Regeneron, Moderna, Gilead
+        # Consumer / Retail gaps
+        "LULU", "TJX", "MNST",                              # Lululemon, TJ Maxx, Monster Beverage
+        # Natural Gas pure plays
+        "EQT", "AR",                                         # EQT Corp, Antero Resources
     ],
     "stock_sectors": {
         # Cybersecurity
@@ -280,6 +294,23 @@ DEFAULT_CONFIG = {
         "UPST":  "Fintech",
         # Small-Cap Growth / Aerospace
         "LUNR":  "Industrials", "JOBY":  "Industrials", "ACHR":  "Industrials",
+        # Medical Devices
+        "BSX":   "Healthcare & Biotech", "SYK":  "Healthcare & Biotech",
+        "PODD":  "Healthcare & Biotech",
+        # Insurance
+        "PGR":   "Financials", "CB":    "Financials",
+        "AFL":   "Financials", "MET":   "Financials",
+        # Digital Banking / LatAm
+        "NU":    "Fintech", "GLOB":  "Latin America",
+        # AI & Automation Software
+        "PATH":  "AI & Machine Learning", "MNDY":  "Technology",
+        # Pharma / Biotech gaps
+        "REGN":  "Healthcare & Biotech", "MRNA":  "Healthcare & Biotech",
+        "GILD":  "Healthcare & Biotech",
+        # Consumer / Retail gaps
+        "LULU":  "Consumer", "TJX":   "Consumer", "MNST":  "Consumer",
+        # Natural Gas pure plays
+        "EQT":   "Energy & Clean Energy", "AR":   "Energy & Clean Energy",
     },
     "industry_etfs": {
         "Technology": "XLK",
