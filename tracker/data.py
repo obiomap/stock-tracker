@@ -68,10 +68,12 @@ def fetch_history(symbol: str, period: str = "2y") -> Optional[pd.DataFrame]:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period, interval="1d", auto_adjust=True)
         if hist.empty:
+            print(f"[fetch_hist] {symbol}: empty {period} history")
             return None
         _store(cache_key, hist)
         return hist
-    except Exception:
+    except Exception as e:
+        print(f"[fetch_hist] {symbol}: exception — {e}")
         return None
 
 
@@ -81,6 +83,8 @@ def fetch_multiple_snapshots(symbols: list[str]) -> dict[str, dict]:
         snap = fetch_ticker_snapshot(sym)
         if snap:
             results[sym] = snap
+        else:
+            print(f"[fetch_multi] {sym}: returned None — skipping")
         time.sleep(0.1)  # avoid rate limiting
     return results
 
