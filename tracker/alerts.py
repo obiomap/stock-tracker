@@ -111,6 +111,12 @@ def build_sms_summary(stocks: list[dict], alert_symbols: set[str] | None = None)
         [s for s in pool if s.get("rsi") is not None and (s["rsi"] <= 30 or s["rsi"] >= 70)],
         key=lambda s: abs((s.get("rsi") or 50) - 50), reverse=True,
     )
+    vol_spikes = sorted(
+        [s for s in pool if s.get("volume") and s.get("avg_volume")
+         and (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1) >= 2.0],
+        key=lambda s: (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1),
+        reverse=True,
+    )
 
     parts: list[str] = ["StockTracker"]
     if signals:
@@ -123,6 +129,11 @@ def build_sms_summary(stocks: list[dict], alert_symbols: set[str] | None = None)
         disp = m["symbol"].replace("-USD", "")
         chg  = m.get("change_pct") or 0
         parts.append(f"{disp} {chg:+.1f}%")
+    if vol_spikes:
+        vs   = vol_spikes[0]
+        disp = vs["symbol"].replace("-USD", "")
+        vr   = (vs.get("volume") or 0) / max(vs.get("avg_volume") or 1, 1)
+        parts.append(f"{disp} {vr:.1f}x vol")
     if extremes:
         ex   = extremes[0]
         disp = ex["symbol"].replace("-USD", "")
@@ -289,11 +300,23 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
         conf = s.get("prediction_confidence") or 0
         disp = s["symbol"].replace("-USD", "")
         alt  = "#172033" if ai_stocks.index(s) % 2 else "#1e293b"
+        vol  = s.get("volume") or 0
+        avg  = max(s.get("avg_volume") or 1, 1)
+        vr   = vol / avg
+        if vr >= 3.0:
+            v_color = "#f97316"; v_str = f"&#x1F525;{vr:.1f}×"   # fire — very high
+        elif vr >= 2.0:
+            v_color = "#22c55e"; v_str = f"{vr:.1f}×"             # green — high
+        elif vr >= 1.5:
+            v_color = "#eab308"; v_str = f"{vr:.1f}×"             # amber — elevated
+        else:
+            v_color = "#475569"; v_str = f"{vr:.1f}×"             # gray — normal
         rows_ai += (
             f'<tr style="background:{alt}">'
             f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
             f'<td style="padding:10px 14px;text-align:right;color:#e2e8f0">{fmt_price(s.get("price"))}</td>'
             f'<td style="padding:10px 14px;text-align:center;color:{chg_color(chg)};font-weight:600">{chg:+.2f}%</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:600;color:{v_color}">{v_str}</td>'
             f'<td style="padding:10px 14px;text-align:center;color:#cbd5e1">{fmt_rsi(s.get("rsi"))}</td>'
             f'<td style="padding:10px 14px;text-align:center">'
             f'<span style="background:{sig_bg.get(pred,"#1e293b")};color:{sig_color.get(pred,"#94a3b8")};'
@@ -302,10 +325,11 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'</tr>'
         )
     if not rows_ai:
-        rows_ai = _empty_row(6, "No high-confidence signals today — check back after market close")
+        rows_ai = _empty_row(7, "No high-confidence signals today — check back after market close")
 
     hdr_ai = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
-              _th("RSI", "center") + _th("Signal", "center") + _th("Confidence", "right"))
+              _th("Vol", "center") + _th("RSI", "center") +
+              _th("Signal", "center") + _th("Confidence", "right"))
     sec_ai = _section("&#x1F916;", "AI Top Signals", hdr_ai, rows_ai)
 
     # ── 2. TODAY'S TOP MOVERS ─────────────────────────────────────────────────
@@ -373,6 +397,66 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
                _th("Change", "center") + _th("Condition", "center"))
     sec_ext = _section("&#x26A1;", "Technical Extremes", hdr_ext, rows_ext)
 
+    # ── 4. VOLUME SPIKES ──────────────────────────────────────────────────────
+    def _vol_ratio(s: dict) -> float:
+        return (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1)
+
+    vol_spikes = [
+        s for s in stocks
+        if s.get("volume") and s.get("avg_volume") and s.get("price")
+        and _vol_ratio(s) >= 1.5
+    ]
+    vol_spikes.sort(key=_vol_ratio, reverse=True)
+
+    rows_vol = ""
+    for i, s in enumerate(vol_spikes[:12]):
+        disp  = s["symbol"].replace("-USD", "")
+        chg   = s.get("change_pct") or 0
+        rsi   = s.get("rsi")
+        ratio = _vol_ratio(s)
+        pred  = s.get("prediction", "NEUTRAL")
+        conf  = s.get("prediction_confidence") or 0
+        alt   = "#172033" if i % 2 else "#1e293b"
+
+        if ratio >= 3.0:
+            r_color = "#f97316"; r_label = f"&#x1F525;{ratio:.1f}×"
+        elif ratio >= 2.0:
+            r_color = "#22c55e"; r_label = f"{ratio:.1f}×"
+        else:
+            r_color = "#eab308"; r_label = f"{ratio:.1f}×"
+
+        # Conviction badge: signal + vol confirmation
+        if pred in ("BULLISH", "BEARISH") and ratio >= 2.0:
+            badge_bg  = sig_bg.get(pred, "#1e293b")
+            badge_col = sig_color.get(pred, "#94a3b8")
+            badge_txt = f"{pred} &#x2713;"
+        elif pred in ("BULLISH", "BEARISH"):
+            badge_bg  = "#1e293b"; badge_col = sig_color.get(pred, "#94a3b8")
+            badge_txt = pred
+        else:
+            badge_bg  = "#1e293b"; badge_col = "#64748b"; badge_txt = "NEUTRAL"
+
+        rows_vol += (
+            f'<tr style="background:{alt}">'
+            f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
+            f'<td style="padding:10px 14px;text-align:right;color:#e2e8f0">{fmt_price(s.get("price"))}</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:{chg_color(chg)};font-weight:600">{chg:+.2f}%</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:{r_color}">{r_label}</td>'
+            f'<td style="padding:10px 14px;text-align:center">'
+            f'<span style="background:{badge_bg};color:{badge_col};'
+            f'padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700">{badge_txt}</span></td>'
+            f'<td style="padding:10px 14px;text-align:center;color:#cbd5e1">'
+            f'{"—" if rsi is None else f"{float(rsi):.0f}"}'
+            f'</td>'
+            f'</tr>'
+        )
+    if not rows_vol:
+        rows_vol = _empty_row(6, "No unusual volume today — all stocks trading near average")
+
+    hdr_vol = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
+               _th("Vol vs Avg", "center") + _th("Signal", "center") + _th("RSI", "center"))
+    sec_vol = _section("&#x1F4CA;", "Volume Spikes", hdr_vol, rows_vol)
+
     # ── Assemble email ────────────────────────────────────────────────────────
     return f"""<!DOCTYPE html>
 <html>
@@ -391,6 +475,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
   </div>
 
   {sec_ai}
+  {sec_vol}
   {sec_movers}
   {sec_ext}
 
@@ -739,6 +824,14 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         if conf >= ml_thresh and signal != "NEUTRAL" and not db.was_alert_sent_today(f"ML_{signal}", sym):
             msg = f"{sym} high-confidence {signal} signal ({conf*100:.0f}%)"
             db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
+            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
+
+        # Combined conviction: AI signal + volume surge = strongest signal
+        if (vol_ratio >= 2.0 and conf >= 0.60 and signal != "NEUTRAL"
+                and not db.was_alert_sent_today("VOL_CONFIRMED", sym)):
+            msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
+                   f"— conviction signal")
+            db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
 
     for e in earnings:
