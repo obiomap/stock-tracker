@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
         "OCGN", "ATOS", "BNGO",         # Biotech
         "WKHS", "LCID", "NIO",          # EV / clean transport
         "CLOV", "SPCE", "MVIS",         # Speculative tech
-        "BBAI", "SOUN", "KULR",         # AI / small-cap tech
+        "BBAI", "SOUN", "KULR", "NVTS", # AI / small-cap tech
         # Latin America
         "MELI", "VALE", "ITUB", "EWZ",
         # Asian Markets
@@ -219,6 +219,7 @@ DEFAULT_CONFIG = {
         "WKHS": "Penny Stocks", "LCID": "Penny Stocks", "NIO":  "Penny Stocks",
         "CLOV": "Penny Stocks", "SPCE": "Penny Stocks", "MVIS": "Penny Stocks",
         "BBAI": "Penny Stocks", "SOUN": "Penny Stocks", "KULR": "Penny Stocks",
+        "NVTS": "Penny Stocks",
         # Nigerian Exchange (NGX) - London-listed
         "AAF.L": "Nigerian Exchange (NGX)", "SEPL.L": "Nigerian Exchange (NGX)",
         # Asian Markets

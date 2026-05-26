@@ -362,6 +362,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "SOUN": "SoundHound AI — voice AI for restaurants and automotive",
             "BBAI": "BigBear.ai — AI analytics for defense and intelligence",
             "KULR": "KULR Technology — NASA-backed thermal/battery management",
+            "NVTS": "Navitas Semiconductor — GaN and SiC power ICs for EV charging, solar, and AI PSUs",
             "LUNR": "Intuitive Machines — NASA lunar landing missions",
             "OPEN": "Opendoor Technologies — online real estate marketplace",
             "NKLA": "Nikola — hydrogen and electric semi-trucks",
