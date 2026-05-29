@@ -540,6 +540,17 @@ body{
 .level-bar{height:3px;background:rgba(255,255,255,.1);border-radius:2px;margin-top:4px;overflow:hidden}
 .level-fill{height:100%;border-radius:2px;transition:width .4s}
 
+/* ── LIVE indicator ── */
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+          background:#10b981;margin-right:5px;
+          animation:live-pulse 2s ease-in-out infinite}
+@keyframes live-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.75)}}
+.live-badge{display:inline-flex;align-items:center;font-size:11px;font-weight:700;
+            color:#10b981;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);
+            padding:3px 10px;border-radius:50px;letter-spacing:.4px}
+@keyframes wl-row-flash{0%{background:rgba(99,102,241,.18)}100%{background:transparent}}
+.wl-flash td{animation:wl-row-flash .7s ease-out}
+
 /* ── WATCHLIST TABLE ── */
 .wl-section{margin-bottom:40px}
 .wl-controls{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
@@ -590,6 +601,52 @@ body{
 .wl-neut{background:rgba(99,102,241,.14);color:#818cf8}
 .wl-na{color:rgba(255,255,255,.22)}
 @media(max-width:580px){.wl-search{width:100%}.wl-controls{flex-direction:column;align-items:flex-start}.wl-ts{margin-left:0}}
+
+/* ── FLOW INTELLIGENCE (sweeps / dark pool) ── */
+.flow-section{margin-bottom:40px}
+.flow-tabs{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.flow-tab{padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;
+          border:1.5px solid rgba(255,255,255,.12);cursor:pointer;
+          background:rgba(255,255,255,.045);color:rgba(255,255,255,.55);
+          transition:all .18s}
+.flow-tab.active-golden{background:rgba(251,191,36,.18);border-color:#fbbf24;color:#fde68a}
+.flow-tab.active-sweep{background:rgba(129,140,248,.18);border-color:#818cf8;color:#c7d2fe}
+.flow-tab.active-dp{background:rgba(56,189,248,.18);border-color:#38bdf8;color:#bae6fd}
+.flow-tab:hover{background:rgba(255,255,255,.09);color:#fff}
+.flow-panel{display:none}
+.flow-panel.active{display:block}
+.flow-wrap{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,.09);
+           background:rgba(255,255,255,.02)}
+.flow-table{width:100%;border-collapse:collapse;font-size:13px;min-width:680px}
+.flow-table thead th{padding:10px 14px;text-align:left;font-size:11px;font-weight:700;
+                     text-transform:uppercase;letter-spacing:.6px;
+                     background:rgba(255,255,255,.04);color:rgba(255,255,255,.45);
+                     white-space:nowrap}
+.flow-table thead th:not(:first-child){text-align:right}
+.flow-table tbody tr{border-bottom:1px solid rgba(255,255,255,.038)}
+.flow-table tbody tr:last-child{border-bottom:none}
+.flow-table tbody tr:hover td{background:rgba(255,255,255,.04)}
+.flow-table td{padding:10px 14px;white-space:nowrap}
+.flow-sym{font-weight:700;color:#e2e8f0}
+.flow-badge-call{display:inline-block;padding:2px 8px;border-radius:5px;
+                 font-size:11px;font-weight:700;letter-spacing:.4px;
+                 background:rgba(16,185,129,.2);color:#34d399}
+.flow-badge-put{display:inline-block;padding:2px 8px;border-radius:5px;
+                font-size:11px;font-weight:700;letter-spacing:.4px;
+                background:rgba(239,68,68,.2);color:#f87171}
+.flow-badge-golden{display:inline-block;padding:2px 8px;border-radius:5px;
+                   font-size:11px;font-weight:700;letter-spacing:.4px;
+                   background:rgba(251,191,36,.2);color:#fde68a}
+.flow-badge-accum{display:inline-block;padding:2px 8px;border-radius:5px;
+                  font-size:11px;font-weight:700;letter-spacing:.4px;
+                  background:rgba(56,189,248,.2);color:#bae6fd}
+.flow-badge-distr{display:inline-block;padding:2px 8px;border-radius:5px;
+                  font-size:11px;font-weight:700;letter-spacing:.4px;
+                  background:rgba(245,158,11,.2);color:#fcd34d}
+.flow-premium{font-weight:700;color:#fde68a;text-align:right}
+.flow-notional{font-weight:700;color:#bae6fd;text-align:right}
+.flow-empty{text-align:center;padding:28px;color:rgba(255,255,255,.28);font-style:italic}
+.flow-disclaimer{margin-top:10px;font-size:11px;color:rgba(255,255,255,.3);text-align:center}
 
 /* ── OPTIONS INTELLIGENCE ── */
 .opt-section{margin-bottom:40px}
@@ -980,6 +1037,50 @@ def create_app() -> Flask:
             mimetype="application/json"
         )
 
+    # ── sweeps API ───────────────────────────────────────────────────────────
+
+    @_app.route("/api/sweeps")
+    def api_sweeps():
+        import json as _json
+        from datetime import datetime as _dt
+        data = db.get_all_sweeps_today()
+        resp = Response(
+            _json.dumps({"ts": _dt.now().strftime("%H:%M:%S"), **data}),
+            mimetype="application/json"
+        )
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    # ── live price API (polled by the browser every 30 s) ────────────────────
+
+    @_app.route("/api/live")
+    def api_live():
+        import json as _json
+        from datetime import datetime as _dt
+        out = {}
+        for s in db.get_all_stocks():
+            sym = s.get("symbol")
+            if not sym or s.get("price") is None:
+                continue
+            price = s.get("price") or 0
+            ma50  = s.get("ma50")
+            out[sym.lower()] = {
+                "sym":   sym,
+                "price": price,
+                "chg":   s.get("change_pct"),
+                "vol":   s.get("volume"),
+                "rsi":   s.get("rsi"),
+                "vs":    round((price - ma50) / ma50 * 100, 2) if ma50 and price else None,
+                "pred":  s.get("prediction") or "NEUTRAL",
+                "conf":  round((s.get("prediction_confidence") or 0) * 100),
+            }
+        resp = Response(
+            _json.dumps({"ts": _dt.now().strftime("%H:%M:%S"), "stocks": out}),
+            mimetype="application/json"
+        )
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     # ── main index ────────────────────────────────────────────────────────────
 
     @_app.route("/")
@@ -1369,6 +1470,162 @@ def create_app() -> Flask:
         if not wl_rows:
             wl_rows = '<tr><td colspan="8" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
 
+        # -- flow intelligence (sweeps / dark pool)
+        sweep_data   = db.get_all_sweeps_today()
+        golden_recs  = sweep_data["golden"]
+        call_sweeps  = sweep_data["calls"]
+        put_sweeps   = sweep_data["puts"]
+        dp_blocks    = sweep_data["dark_pool"]
+        all_sweeps   = call_sweeps + put_sweeps
+
+        def _fmt_prem(v):
+            v = v or 0
+            if v >= 1_000_000: return f"${v/1_000_000:.1f}M"
+            if v >= 1_000:     return f"${v/1_000:.0f}K"
+            return f"${v:.0f}"
+
+        def _fmt_notional(v):
+            v = v or 0
+            if v >= 1_000_000_000: return f"${v/1_000_000_000:.1f}B"
+            if v >= 1_000_000:     return f"${v/1_000_000:.1f}M"
+            if v >= 1_000:         return f"${v/1_000:.0f}K"
+            return f"${v:.0f}"
+
+        def _flow_opt_rows(recs):
+            if not recs:
+                return '<tr><td colspan="8" class="flow-empty">No sweeps detected yet — data refreshes every 5 min</td></tr>'
+            rows = ""
+            for r in recs[:20]:
+                sym    = r.get("symbol","")
+                opt    = r.get("opt_type","")
+                strike = r.get("strike") or 0
+                expiry = (r.get("expiry") or "")[:10]
+                days   = r.get("days_out") or 0
+                vol    = r.get("opt_volume") or 0
+                oi     = r.get("open_interest") or 0
+                vol_oi = r.get("vol_oi_ratio") or 0
+                last   = r.get("last_price") or 0
+                iv     = r.get("iv_pct") or 0
+                prem   = r.get("total_premium") or 0
+                otm    = r.get("otm_pct") or 0
+                agg    = r.get("aggression") or 0
+                is_g   = r.get("is_golden") or r.get("sweep_type") == "GOLDEN_SWEEP"
+                badge  = ('<span class="flow-badge-golden">&#x2728; GOLDEN</span>' if is_g
+                          else '<span class="flow-badge-call">CALL</span>' if opt == "CALL"
+                          else '<span class="flow-badge-put">PUT</span>')
+                rows += (
+                    f'<tr>'
+                    f'<td class="flow-sym">{sec_mod.display_symbol(sym)}</td>'
+                    f'<td style="text-align:right">{badge}</td>'
+                    f'<td style="text-align:right;color:#e2e8f0">${strike:.0f} &bull; {expiry} ({days}d)</td>'
+                    f'<td class="flow-premium" style="text-align:right">{_fmt_prem(prem)}</td>'
+                    f'<td style="text-align:right;color:#94a3b8">{vol:,} / {oi:,} ({vol_oi:.1f}x)</td>'
+                    f'<td style="text-align:right;color:#94a3b8">${last:.2f}</td>'
+                    f'<td style="text-align:right;color:#94a3b8">{iv:.0f}%</td>'
+                    f'<td style="text-align:right;color:{"#34d399" if agg > 0.7 else "#94a3b8"}">{agg*100:.0f}%</td>'
+                    f'</tr>'
+                )
+            return rows
+
+        def _flow_dp_rows(recs):
+            if not recs:
+                return '<tr><td colspan="6" class="flow-empty">No dark pool blocks detected — volume threshold not met</td></tr>'
+            rows = ""
+            for r in recs[:15]:
+                sym   = r.get("symbol","")
+                dirn  = r.get("direction","")
+                vol   = r.get("opt_volume") or 0
+                vrat  = r.get("vol_ratio") or 0
+                chg   = r.get("change_pct") or 0
+                price = r.get("current_price") or 0
+                notl  = r.get("notional") or 0
+                badge = ('<span class="flow-badge-accum">ACCUM</span>' if dirn == "ACCUMULATION"
+                         else '<span class="flow-badge-distr">DISTR</span>')
+                rows += (
+                    f'<tr>'
+                    f'<td class="flow-sym">{sec_mod.display_symbol(sym)}</td>'
+                    f'<td style="text-align:right">{badge}</td>'
+                    f'<td style="text-align:right;color:#e2e8f0">${price:.2f}</td>'
+                    f'<td class="flow-notional" style="text-align:right">{_fmt_notional(notl)}</td>'
+                    f'<td style="text-align:right;color:#94a3b8">{vrat:.1f}x avg vol</td>'
+                    f'<td style="text-align:right;color:{"#34d399" if chg >= 0 else "#f87171"}">{chg:+.2f}%</td>'
+                    f'</tr>'
+                )
+            return rows
+
+        opt_col_heads = (
+            '<th>Symbol</th>'
+            '<th style="text-align:right">Type</th>'
+            '<th style="text-align:right">Strike &bull; Expiry</th>'
+            '<th style="text-align:right">Premium</th>'
+            '<th style="text-align:right">Vol / OI</th>'
+            '<th style="text-align:right">Last</th>'
+            '<th style="text-align:right">IV</th>'
+            '<th style="text-align:right">Aggression</th>'
+        )
+        dp_col_heads = (
+            '<th>Symbol</th>'
+            '<th style="text-align:right">Direction</th>'
+            '<th style="text-align:right">Price</th>'
+            '<th style="text-align:right">Notional</th>'
+            '<th style="text-align:right">Volume</th>'
+            '<th style="text-align:right">Price Chg</th>'
+        )
+
+        flow_section_html = f"""
+  <div class="flow-section" id="flow">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F30A; Flow Intelligence</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">
+        Dark pool &bull; Options sweeps &bull; Golden sweeps &bull; refreshes every 5 min
+      </span>
+    </div>
+    <div class="flow-tabs">
+      <div class="flow-tab active-golden" id="flowTabGolden" onclick="flowSwitch('golden')">
+        &#x2728; Golden Sweeps &mdash; {len(golden_recs)}
+      </div>
+      <div class="flow-tab" id="flowTabSweep" onclick="flowSwitch('sweep')">
+        &#x1F4CA; Options Sweeps &mdash; {len(all_sweeps)}
+      </div>
+      <div class="flow-tab" id="flowTabDp" onclick="flowSwitch('dp')">
+        &#x1F3DB; Dark Pool &mdash; {len(dp_blocks)}
+      </div>
+    </div>
+
+    <div class="flow-panel active" id="flowPanelGolden">
+      <div class="flow-wrap">
+        <table class="flow-table">
+          <thead><tr>{opt_col_heads}</tr></thead>
+          <tbody>{_flow_opt_rows(golden_recs)}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="flow-panel" id="flowPanelSweep">
+      <div class="flow-wrap">
+        <table class="flow-table">
+          <thead><tr>{opt_col_heads}</tr></thead>
+          <tbody>{_flow_opt_rows(all_sweeps)}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="flow-panel" id="flowPanelDp">
+      <div class="flow-wrap">
+        <table class="flow-table">
+          <thead><tr>{dp_col_heads}</tr></thead>
+          <tbody>{_flow_dp_rows(dp_blocks)}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="flow-disclaimer">
+      &#x26A0;&#xFE0F; Dark pool signals are approximations from public volume data. Options sweep volume/OI ratios
+      identify unusual positioning — not guaranteed institutional activity. Not financial advice.
+    </p>
+  </div>
+"""
+
         # -- options intelligence section
         opt_recs = db.get_option_recs(40)
         call_recs = [r for r in opt_recs if r.get("opt_type") == "CALL"]
@@ -1520,6 +1777,7 @@ def create_app() -> Flask:
   <div class="nav-logo"><span>&#x1F4C8;</span> Stock Tracker</div>
   <div class="nav-links">
     <a href="#watchlist">&#x1F4CA; Live Prices</a>
+    <a href="#flow">&#x1F30A; Flow</a>
     <a href="#options">&#x1F4C8; Options</a>
     <a href="/learn">Knowledge Base</a>
     <a href="#subscribe" class="nav-cta">Get Alerts</a>
@@ -1708,13 +1966,16 @@ def create_app() -> Flask:
   <div class="wl-section" id="watchlist">
     <div class="section-head" style="margin-bottom:16px">
       <h2>&#x1F4CA; Live Watchlist</h2>
-      <span style="font-size:12px;color:rgba(255,255,255,.35)">{n_tracked} stocks tracked &bull; refreshes every 5 min</span>
+      <span style="display:flex;align-items:center;gap:12px">
+        <span class="live-badge"><span class="live-dot" id="liveDot"></span>LIVE</span>
+        <span style="font-size:12px;color:rgba(255,255,255,.35)">{n_tracked} stocks tracked</span>
+      </span>
     </div>
     <div class="wl-controls">
       <input type="search" class="wl-search" id="wlSearch" placeholder="&#x1F50D; Filter symbol or sector&hellip;" autocomplete="off">
       <button class="wl-btn" id="wlExpandAll">Expand All</button>
       <button class="wl-btn" id="wlCollapseAll">Collapse All</button>
-      <span class="wl-ts">{wl_last_refresh}</span>
+      <span class="wl-ts" id="wlTs">{wl_last_refresh}</span>
     </div>
     <div class="wl-wrap">
       <table class="wl-table" id="wlTable">
@@ -1736,6 +1997,9 @@ def create_app() -> Flask:
       </table>
     </div>
   </div>
+
+  <!-- FLOW INTELLIGENCE -->
+  {flow_section_html}
 
   <!-- OPTIONS INTELLIGENCE -->
   {options_section_html}
@@ -1862,6 +2126,106 @@ def create_app() -> Flask:
     }});
   }});
 }})();
+
+// ── Real-time price polling (every 30 s) ─────────────────────────────────
+(function(){{
+  var POLL_MS = 30000;
+  var liveDot = document.getElementById('liveDot');
+  var liveTs  = document.getElementById('wlTs');
+
+  function fmtPrice(p, sym) {{
+    if (p == null) return 'N/A';
+    sym = sym || '';
+    var crypto = sym.indexOf('-USD') !== -1;
+    if (crypto && p > 1000) return '$' + p.toLocaleString('en', {{maximumFractionDigits:0}});
+    if (p >= 100)   return '$' + p.toLocaleString('en', {{minimumFractionDigits:2, maximumFractionDigits:2}});
+    if (p >= 1)     return '$' + p.toFixed(3);
+    if (p >= 0.01)  return '$' + p.toFixed(4);
+    if (p >= 0.0001)return '$' + p.toFixed(6);
+    return '$' + p.toFixed(8);
+  }}
+
+  function fmtVol(v) {{
+    if (!v) return '—';
+    if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return Math.round(v/1e3) + 'K';
+    return String(v);
+  }}
+
+  function flash(row) {{
+    row.classList.remove('wl-flash');
+    void row.offsetWidth;
+    row.classList.add('wl-flash');
+  }}
+
+  function apply(data) {{
+    var stocks = data.stocks || {{}};
+    document.querySelectorAll('tr.wl-row[data-sym]').forEach(function(row) {{
+      var d = stocks[row.dataset.sym];
+      if (!d) return;
+      var c = row.cells;
+      if (c.length < 8) return;
+
+      var newP = fmtPrice(d.price, d.sym);
+      var changed = c[1].textContent !== newP;
+      c[1].textContent = newP;
+
+      if (d.chg != null) {{
+        var cs = (d.chg >= 0 ? '+' : '') + d.chg.toFixed(2) + '%';
+        c[2].textContent = cs;
+        c[2].className = 'wl-chg ' + (d.chg >= 0 ? 'up' : 'down');
+      }}
+
+      c[3].textContent = fmtVol(d.vol);
+
+      if (d.rsi != null) {{
+        c[4].textContent = Math.round(d.rsi).toString();
+        c[4].className = 'wl-rsi ' + (d.rsi >= 70 ? 'down' : d.rsi <= 30 ? 'up' : 'wl-na');
+      }}
+
+      if (d.vs != null) {{
+        c[5].textContent = (d.vs >= 0 ? '+' : '') + d.vs.toFixed(1) + '%';
+        c[5].className = 'wl-vs ' + (d.vs >= 0 ? 'up' : 'down');
+      }}
+
+      var cls, lbl;
+      if (d.pred === 'BULLISH' || d.pred === 'UP')       {{ cls = 'wl-bull'; lbl = 'Bullish'; }}
+      else if (d.pred === 'BEARISH' || d.pred === 'DOWN'){{ cls = 'wl-bear'; lbl = 'Bearish'; }}
+      else                                                {{ cls = 'wl-neut'; lbl = 'Neutral'; }}
+      c[6].innerHTML = '<span class="wl-badge ' + cls + '">' + lbl + '</span>';
+      c[7].textContent = d.conf + '%';
+
+      if (changed) flash(row);
+    }});
+
+    if (liveTs) liveTs.textContent = 'Live • ' + data.ts;
+    if (liveDot) liveDot.style.opacity = '1';
+  }}
+
+  function poll() {{
+    if (liveDot) liveDot.style.opacity = '0.35';
+    fetch('/api/live')
+      .then(function(r) {{ return r.json(); }})
+      .then(apply)
+      .catch(function() {{ if (liveDot) liveDot.style.opacity = '0.15'; }});
+  }}
+
+  setTimeout(poll, 5000);
+  setInterval(poll, POLL_MS);
+}})();
+
+// ── Flow Intelligence tab switcher ───────────────────────────────────────
+window.flowSwitch = function(tab) {{
+  document.getElementById('flowPanelGolden').classList.toggle('active', tab === 'golden');
+  document.getElementById('flowPanelSweep').classList.toggle('active',  tab === 'sweep');
+  document.getElementById('flowPanelDp').classList.toggle('active',     tab === 'dp');
+  var tg = document.getElementById('flowTabGolden');
+  var ts = document.getElementById('flowTabSweep');
+  var td = document.getElementById('flowTabDp');
+  if(tg) tg.className = 'flow-tab' + (tab==='golden' ? ' active-golden' : '');
+  if(ts) ts.className = 'flow-tab' + (tab==='sweep'  ? ' active-sweep'  : '');
+  if(td) td.className = 'flow-tab' + (tab==='dp'     ? ' active-dp'     : '');
+}};
 
 // ── Options Intelligence tab switcher (global scope) ─────────────────────
 window.optSwitch = function(tab) {{

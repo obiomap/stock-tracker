@@ -111,6 +111,31 @@ def init_db() -> None:
                 current_price REAL,
                 created_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS sweeps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sweep_type TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                direction TEXT,
+                opt_type TEXT,
+                strike REAL,
+                expiry TEXT,
+                days_out INTEGER,
+                opt_volume INTEGER,
+                open_interest INTEGER,
+                vol_oi_ratio REAL,
+                last_price REAL,
+                iv_pct REAL,
+                total_premium REAL,
+                otm_pct REAL,
+                aggression REAL,
+                current_price REAL,
+                notional REAL,
+                vol_ratio REAL,
+                change_pct REAL,
+                is_golden INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
         """)
     _migrate_columns()
 
@@ -491,3 +516,63 @@ def get_option_recs(limit: int = 40) -> list[dict]:
             LIMIT ?
         """, (limit,)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Sweeps / Dark Pool ────────────────────────────────────────────────────────
+
+def upsert_sweeps(sweeps: list[dict]) -> None:
+    """Replace today's sweeps with the latest scan results."""
+    if not sweeps:
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        conn.execute("DELETE FROM sweeps WHERE created_at LIKE ?", (f"{today}%",))
+        for s in sweeps:
+            conn.execute("""
+                INSERT INTO sweeps (
+                    sweep_type, symbol, direction, opt_type, strike, expiry,
+                    days_out, opt_volume, open_interest, vol_oi_ratio, last_price,
+                    iv_pct, total_premium, otm_pct, aggression, current_price,
+                    notional, vol_ratio, change_pct, is_golden, created_at
+                ) VALUES (
+                    :sweep_type, :symbol, :direction, :opt_type, :strike, :expiry,
+                    :days_out, :opt_volume, :open_interest, :vol_oi_ratio, :last_price,
+                    :iv_pct, :total_premium, :otm_pct, :aggression, :current_price,
+                    :notional, :vol_ratio, :change_pct, :is_golden, :created_at
+                )
+            """, s)
+
+
+def get_sweeps(sweep_type: str = "", limit: int = 30) -> list[dict]:
+    """Return recent sweeps, optionally filtered by type."""
+    with get_connection() as conn:
+        if sweep_type:
+            rows = conn.execute("""
+                SELECT * FROM sweeps WHERE sweep_type = ?
+                ORDER BY total_premium DESC, notional DESC, created_at DESC
+                LIMIT ?
+            """, (sweep_type, limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT * FROM sweeps
+                ORDER BY total_premium DESC, notional DESC, created_at DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_sweeps_today() -> dict:
+    """Return golden, options sweeps, and dark pool blocks from today."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sweeps WHERE created_at LIKE ? ORDER BY total_premium DESC, notional DESC",
+            (f"{today}%",)
+        ).fetchall()
+    all_rows = [dict(r) for r in rows]
+    return {
+        "golden":    [r for r in all_rows if r["sweep_type"] == "GOLDEN_SWEEP"],
+        "calls":     [r for r in all_rows if r["sweep_type"] == "CALL_SWEEP"],
+        "puts":      [r for r in all_rows if r["sweep_type"] == "PUT_SWEEP"],
+        "dark_pool": [r for r in all_rows if r["sweep_type"] == "DARK_POOL"],
+    }

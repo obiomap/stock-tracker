@@ -861,3 +861,85 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         print(f"[alert] {subject} | email={counts['email_sent']} sms={counts['sms_sent']}")
 
     return new_alerts
+
+
+def send_sweep_alert(sweeps: list[dict], config: dict) -> int:
+    """
+    Notify subscribers about golden sweeps and significant dark pool blocks.
+    Returns total subscribers notified.
+    """
+    if not sweeps:
+        return 0
+
+    golden     = [s for s in sweeps if s.get("sweep_type") == "GOLDEN_SWEEP"]
+    dark_pool  = [s for s in sweeps if s.get("sweep_type") == "DARK_POOL"]
+    opt_sweeps = [s for s in sweeps if s.get("sweep_type") in ("CALL_SWEEP", "PUT_SWEEP")]
+
+    syms    = sorted({s["symbol"] for s in sweeps})
+    subject = f"Flow Alert: {', '.join(syms[:4])}{'...' if len(syms) > 4 else ''}"
+
+    def _fmt_premium(v):
+        v = v or 0
+        if v >= 1_000_000: return f"${v/1_000_000:.1f}M"
+        if v >= 1_000:     return f"${v/1_000:.0f}K"
+        return f"${v:.0f}"
+
+    def _fmt_notional(v):
+        v = v or 0
+        if v >= 1_000_000_000: return f"${v/1_000_000_000:.1f}B"
+        if v >= 1_000_000:     return f"${v/1_000_000:.1f}M"
+        return f"${v/1_000:.0f}K"
+
+    def _sweep_rows(rows):
+        if not rows:
+            return "<tr><td colspan='6' style='padding:12px;color:#94a3b8;text-align:center'>None detected</td></tr>"
+        out = ""
+        for s in rows[:8]:
+            color  = "#34d399" if s.get("direction") in ("BULLISH","ACCUMULATION") else "#f87171"
+            badge  = s.get("opt_type") or s.get("direction", "")
+            out += (
+                f"<tr style='border-bottom:1px solid #1e293b'>"
+                f"<td style='padding:10px 14px;font-weight:700;color:#e2e8f0'>{s['symbol']}</td>"
+                f"<td style='padding:10px 14px'><span style='background:{color}22;color:{color};"
+                f"padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700'>{badge}</span></td>"
+                f"<td style='padding:10px 14px;color:#e2e8f0'>"
+                f"{'$'+str(s.get('strike','')) if s.get('strike') else '—'} "
+                f"{'exp '+s['expiry'][:10] if s.get('expiry') else ''}</td>"
+                f"<td style='padding:10px 14px;color:{color};font-weight:700'>"
+                f"{_fmt_premium(s.get('total_premium')) if s.get('total_premium') else _fmt_notional(s.get('notional'))}</td>"
+                f"<td style='padding:10px 14px;color:#94a3b8;font-size:12px'>"
+                f"{'Vol/OI: '+str(s.get('vol_oi_ratio',''))+'x' if s.get('vol_oi_ratio') else 'Vol: '+str(s.get('vol_ratio',''))+'x avg'}</td>"
+                f"<td style='padding:10px 14px;color:#94a3b8;font-size:12px'>"
+                f"{'IV: '+str(s.get('iv_pct',''))+'%' if s.get('iv_pct') else str(abs(s.get('change_pct',0)))+'% price chg'}</td>"
+                f"</tr>"
+            )
+        return out
+
+    html = f"""
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            background:#0f172a;color:#e2e8f0;padding:32px;max-width:700px;margin:0 auto">
+  <h1 style="color:#fff;font-size:22px;margin-bottom:4px">&#x1F30A; Flow Intelligence Alert</h1>
+  <p style="color:#94a3b8;margin-bottom:28px;font-size:14px">Unusual institutional activity detected &bull; jpstocktracker.pro</p>
+
+  {'<h3 style="color:#fbbf24;margin-bottom:8px">&#x2728; Golden Sweeps</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">TYPE</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PREMIUM</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL/OI</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">IV</th></tr></thead><tbody>'+_sweep_rows(golden)+'</tbody></table><br>' if golden else ''}
+
+  {'<h3 style="color:#818cf8;margin-bottom:8px">&#x1F4CA; Options Sweeps</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">TYPE</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PREMIUM</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL/OI</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">IV</th></tr></thead><tbody>'+_sweep_rows(opt_sweeps)+'</tbody></table><br>' if opt_sweeps else ''}
+
+  {'<h3 style="color:#38bdf8;margin-bottom:8px">&#x1F3DB; Dark Pool Blocks</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">DIR</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">NOTIONAL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL RATIO</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PRICE CHG</th></tr></thead><tbody>'+_sweep_rows(dark_pool)+'</tbody></table><br>' if dark_pool else ''}
+
+  <p style="color:#475569;font-size:12px;margin-top:24px">
+    &#x26A0;&#xFE0F; Dark pool signals are approximations based on public volume data. Not financial advice.
+    <a href="https://jpstocktracker.pro" style="color:#818cf8">View live dashboard</a>
+  </p>
+</div>"""
+
+    sms_text = (
+        f"StockTracker Flow Alert | "
+        f"{len(golden)} golden sweep(s), {len(opt_sweeps)} options sweep(s), "
+        f"{len(dark_pool)} dark pool block(s) | jpstocktracker.pro"
+    )[:160]
+
+    send_email(subject, html, config)
+    counts = notify_subscribers(subject, html, sms_text, set(syms), config)
+    print(f"[sweep alert] {subject} | email={counts['email_sent']} sms={counts['sms_sent']}")
+    return counts["email_sent"] + counts["sms_sent"]

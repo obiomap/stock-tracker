@@ -27,6 +27,7 @@ from tracker import knowledge as kb_mod
 from tracker import social as social_mod
 from tracker import sms as sms_mod
 from tracker import options as opt_mod
+from tracker import sweeps as sweeps_mod
 
 console = Console()
 
@@ -158,6 +159,12 @@ def refresh_all(config: dict) -> None:
             _refresh_options(stocks_out, config)
         except Exception:
             pass
+
+        # ── Sweeps / dark pool refresh ────────────────────────────────────────
+        try:
+            _refresh_sweeps(stocks_out, config)
+        except Exception:
+            pass
     finally:
         _state["refreshing"] = False
 
@@ -240,6 +247,36 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
             alert_mod.send_options_alert(truly_new, config)
         except Exception as e:
             print(f"[options alert] email error: {e}")
+
+
+def _refresh_sweeps(stocks: list[dict], config: dict) -> None:
+    """Scan for options sweeps, golden sweeps, and dark pool block activity."""
+    watchlist  = config.get("watchlist", [])
+    stocks_db  = {s["symbol"]: s for s in stocks}
+    counts     = sweeps_mod.refresh_sweeps(watchlist, stocks_db)
+    print(f"[sweeps] golden={counts['golden']}  opts={counts['opts']}  dark_pool={counts['dark_pool']}")
+
+    # Alert on golden sweeps and significant dark pool blocks
+    from tracker import database as _db
+    sweep_data = _db.get_all_sweeps_today()
+    alertable  = sweep_data["golden"] + [
+        b for b in sweep_data["dark_pool"] if (b.get("notional") or 0) >= 5_000_000
+    ]
+    truly_new = []
+    for s in alertable:
+        atype = f"SWEEP_{s['sweep_type']}"
+        asym  = f"{s['symbol']}_{s.get('expiry','') or s.get('created_at','')[:10]}"
+        if not _db.was_alert_sent_today(atype, s["symbol"]):
+            truly_new.append(s)
+            _db.log_alert(atype, s["symbol"],
+                          f"{s['sweep_type']} {s['symbol']} premium=${s.get('total_premium',0):,.0f} notional=${s.get('notional',0):,.0f}",
+                          "HIGH")
+    if truly_new:
+        print(f"[sweeps] firing alert for {len(truly_new)} new sweep(s)")
+        try:
+            alert_mod.send_sweep_alert(truly_new, config)
+        except Exception as e:
+            print(f"[sweeps alert] error: {e}")
 
 
 # ── dashboard renderers ───────────────────────────────────────────────────────
