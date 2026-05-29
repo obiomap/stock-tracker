@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore")
 MODEL_PATH  = Path(__file__).parent.parent / "models" / "stock_model.pkl"
 SCALER_PATH = Path(__file__).parent.parent / "models" / "scaler.pkl"
 
-# 15-feature set used for ML training and inference
+# Feature set used for ML training and inference (30 features)
 FEATURE_COLS = [
     # Oscillators
     "rsi", "macd_hist", "bb_pband",
@@ -37,6 +37,18 @@ FEATURE_COLS = [
     "price_vs_ma20_pct", "price_vs_ma50_pct",
     # Fibonacci proximity
     "fib_pos_120d", "fib_dist_38", "fib_dist_50", "fib_dist_62",
+    # ── Enhanced: EMA, oscillators, Ichimoku, Asian-market factors ────────────
+    "ema9_ema21_diff",    # EMA9 vs EMA21 crossover momentum
+    "cci_20",             # Commodity Channel Index (cycles + extremes)
+    "mfi_14",             # Money Flow Index (volume-weighted RSI)
+    "cmf_20",             # Chaikin Money Flow (accumulation/distribution)
+    "supertrend_dir",     # Supertrend direction (+1 bull / -1 bear)
+    "ichimoku_cloud",     # Ichimoku cloud position (-1 below / 0 inside / +1 above)
+    "ichimoku_tk",        # Tenkan vs Kijun (+1 bull / -1 bear)
+    "pct_from_52w_high",  # % below 52-week high (0 = at breakout level)
+    "pct_from_52w_low",   # % above 52-week low (0 = at danger level)
+    "vol_regime",         # Volatility regime: ATR% percentile (0=calm, 1=volatile)
+    "gap_pct",            # Overnight gap % (key pattern for Asian markets)
 ]
 
 
@@ -257,6 +269,17 @@ def _rule_signals(ind_data: dict, stock_snap: dict,
     obv_roc  = ind_data.get("obv_roc_5d")
     rsi_div  = int(ind_data.get("rsi_divergence",  0) or 0)
     macd_div = int(ind_data.get("macd_divergence", 0) or 0)
+    # Enhanced indicators
+    ich_cloud  = ind_data.get("ichimoku_cloud")
+    ich_tk     = ind_data.get("ichimoku_tk")
+    supertrend = ind_data.get("supertrend_dir")
+    cci_val    = ind_data.get("cci_20")
+    mfi_val    = ind_data.get("mfi_14")
+    cmf_val    = ind_data.get("cmf_20")
+    ema_diff   = ind_data.get("ema9_ema21_diff")
+    h52_pct    = ind_data.get("pct_from_52w_high")
+    l52_pct    = ind_data.get("pct_from_52w_low")
+    gap_pct    = ind_data.get("gap_pct")
 
     # Market regime detection
     trending       = adx is not None and adx > 25
@@ -414,6 +437,66 @@ def _rule_signals(ind_data: dict, stock_snap: dict,
                 "direction": -1,
                 "weight":    1,
             })
+
+    # ── 15. Ichimoku Cloud (Japanese origin; core to Asian market analysis) ───
+    if ich_cloud is not None:
+        if ich_cloud > 0:
+            signals.append({"name": "Ichimoku Above Cloud",  "direction":  1, "weight": 2})
+        elif ich_cloud < 0:
+            signals.append({"name": "Ichimoku Below Cloud",  "direction": -1, "weight": 2})
+    if ich_tk is not None:
+        if ich_tk > 0:
+            signals.append({"name": "Ichimoku TK Bullish",   "direction":  1, "weight": 1})
+        else:
+            signals.append({"name": "Ichimoku TK Bearish",   "direction": -1, "weight": 1})
+
+    # ── 16. Supertrend ────────────────────────────────────────────────────────
+    if supertrend is not None:
+        if supertrend > 0:
+            signals.append({"name": "Supertrend Bullish",    "direction":  1, "weight": 2})
+        else:
+            signals.append({"name": "Supertrend Bearish",    "direction": -1, "weight": 2})
+
+    # ── 17. CCI -- commodity / cyclical moves ─────────────────────────────────
+    if cci_val is not None:
+        if cci_val < -100:
+            signals.append({"name": f"CCI Oversold ({cci_val:.0f})",   "direction":  1, "weight": 1})
+        elif cci_val > 100:
+            signals.append({"name": f"CCI Overbought ({cci_val:.0f})", "direction": -1, "weight": 1})
+
+    # ── 18. Money Flow Index (volume confirms price moves) ────────────────────
+    if mfi_val is not None:
+        if mfi_val < 20:
+            signals.append({"name": f"MFI Oversold ({mfi_val:.0f})",   "direction":  1, "weight": 2})
+        elif mfi_val > 80:
+            signals.append({"name": f"MFI Overbought ({mfi_val:.0f})", "direction": -1, "weight": 1})
+
+    # ── 19. Chaikin Money Flow (accumulation vs distribution) ─────────────────
+    if cmf_val is not None:
+        if cmf_val > 0.15:
+            signals.append({"name": f"CMF Accumulation (+{cmf_val:.2f})", "direction":  1, "weight": 1})
+        elif cmf_val < -0.15:
+            signals.append({"name": f"CMF Distribution ({cmf_val:.2f})",  "direction": -1, "weight": 1})
+
+    # ── 20. EMA9 / EMA21 crossover ────────────────────────────────────────────
+    if ema_diff is not None:
+        if ema_diff > 0.5:
+            signals.append({"name": f"EMA9 > EMA21 (+{ema_diff:.1f}%)",  "direction":  1, "weight": 1})
+        elif ema_diff < -0.5:
+            signals.append({"name": f"EMA9 < EMA21 ({ema_diff:.1f}%)",   "direction": -1, "weight": 1})
+
+    # ── 21. 52-week proximity (key psychological level for US + Asian retail) ─
+    if h52_pct is not None and h52_pct < 3.0:
+        signals.append({"name": f"Near 52w High ({h52_pct:.1f}% away)",  "direction":  1, "weight": 2})
+    if l52_pct is not None and l52_pct < 5.0:
+        signals.append({"name": f"Near 52w Low ({l52_pct:.1f}% away)",   "direction": -1, "weight": 2})
+
+    # ── 22. Overnight gap (significant for Asian market open dynamics) ────────
+    if gap_pct is not None and abs(gap_pct) > 1.5:
+        dir_g = 1 if gap_pct > 0 else -1
+        w_g   = 2 if abs(gap_pct) > 3.0 else 1
+        signals.append({"name": f"Gap {'Up' if dir_g > 0 else 'Down'} ({gap_pct:+.1f}%)",
+                         "direction": dir_g, "weight": w_g})
 
     return signals
 

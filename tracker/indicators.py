@@ -106,6 +106,112 @@ def calculate_williams_r(high: pd.Series, low: pd.Series, close: pd.Series,
     return -100 * (highest_high - close) / (highest_high - lowest_low).replace(0, np.nan)
 
 
+def calculate_ema(close: pd.Series, period: int) -> pd.Series:
+    """Exponential Moving Average."""
+    return close.ewm(span=period, adjust=False).mean()
+
+
+def calculate_cci(high: pd.Series, low: pd.Series, close: pd.Series,
+                  period: int = 20) -> pd.Series:
+    """Commodity Channel Index. >+100 overbought, <-100 oversold."""
+    tp  = (high + low + close) / 3
+    sma = tp.rolling(period).mean()
+    mad = tp.rolling(period).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    return (tp - sma) / (0.015 * mad.replace(0, np.nan))
+
+
+def calculate_mfi(high: pd.Series, low: pd.Series, close: pd.Series,
+                  volume: pd.Series, period: int = 14) -> pd.Series:
+    """Money Flow Index -- volume-weighted RSI. <20 oversold, >80 overbought."""
+    tp     = (high + low + close) / 3
+    raw_mf = tp * volume
+    delta  = tp.diff()
+    pos_mf = raw_mf.where(delta > 0, 0.0).rolling(period).sum()
+    neg_mf = raw_mf.where(delta <= 0, 0.0).rolling(period).sum()
+    mfr    = pos_mf / neg_mf.replace(0, np.nan)
+    return 100 - (100 / (1 + mfr))
+
+
+def calculate_cmf(high: pd.Series, low: pd.Series, close: pd.Series,
+                  volume: pd.Series, period: int = 20) -> pd.Series:
+    """Chaikin Money Flow. >+0.15 accumulation, <-0.15 distribution."""
+    clv = ((close - low) - (high - close)) / (high - low).replace(0, np.nan)
+    return (clv * volume).rolling(period).sum() / volume.rolling(period).sum().replace(0, np.nan)
+
+
+def calculate_supertrend(high: pd.Series, low: pd.Series, close: pd.Series,
+                         period: int = 10, multiplier: float = 3.0) -> pd.Series:
+    """Supertrend direction. +1.0 = bullish, -1.0 = bearish."""
+    atr       = calculate_atr(high, low, close, period)
+    hl2       = (high + low) / 2.0
+    upper_raw = (hl2 + multiplier * atr).values
+    lower_raw = (hl2 - multiplier * atr).values
+    close_v   = close.values
+    n         = len(close_v)
+
+    f_upper   = upper_raw.copy()
+    f_lower   = lower_raw.copy()
+    direction = np.ones(n, dtype=float)
+
+    for i in range(1, n):
+        if np.isnan(upper_raw[i]) or np.isnan(lower_raw[i]):
+            direction[i] = direction[i - 1]
+            continue
+        f_upper[i] = (upper_raw[i]
+                      if upper_raw[i] < f_upper[i - 1] or close_v[i - 1] > f_upper[i - 1]
+                      else f_upper[i - 1])
+        f_lower[i] = (lower_raw[i]
+                      if lower_raw[i] > f_lower[i - 1] or close_v[i - 1] < f_lower[i - 1]
+                      else f_lower[i - 1])
+        if direction[i - 1] == 1:
+            direction[i] = -1.0 if close_v[i] < f_lower[i] else 1.0
+        else:
+            direction[i] =  1.0 if close_v[i] > f_upper[i] else -1.0
+
+    return pd.Series(direction, index=close.index)
+
+
+def calculate_ichimoku_signals(high: pd.Series, low: pd.Series, close: pd.Series):
+    """
+    Ichimoku Kinko Hyo cloud signals (Japanese origin, widely used across Asia).
+    Returns (cloud_pos, tk_pos):
+      cloud_pos: +1 above cloud, 0 inside, -1 below
+      tk_pos:    +1 Tenkan > Kijun (bullish), -1 bearish
+    """
+    tenkan = (high.rolling(9).max()  + low.rolling(9).min())  / 2
+    kijun  = (high.rolling(26).max() + low.rolling(26).min()) / 2
+    span_a = (tenkan + kijun) / 2
+    span_b = (high.rolling(52).max() + low.rolling(52).min()) / 2
+
+    cloud_top    = pd.concat([span_a, span_b], axis=1).max(axis=1)
+    cloud_bottom = pd.concat([span_a, span_b], axis=1).min(axis=1)
+    cloud_pos    = ((close > cloud_top).astype(float) -
+                    (close < cloud_bottom).astype(float))
+
+    tk_pos = pd.Series(np.where(tenkan > kijun, 1.0, -1.0), index=close.index)
+    return cloud_pos, tk_pos
+
+
+def calculate_52w_levels(high: pd.Series, low: pd.Series, close: pd.Series):
+    """
+    Returns (pct_from_52w_high, pct_from_52w_low).
+    pct_from_52w_high: % below 52-week high (0 = at the high, bullish breakout zone)
+    pct_from_52w_low:  % above 52-week low  (0 = at the low, danger zone)
+    """
+    h52       = high.rolling(252, min_periods=50).max()
+    l52       = low.rolling(252,  min_periods=50).min()
+    from_high = ((h52 - close) / h52 * 100).clip(0, 100)
+    from_low  = ((close - l52) / l52 * 100).clip(0, 200)
+    return from_high, from_low
+
+
+def calculate_vol_regime(atr_pct: pd.Series, lookback: int = 63) -> pd.Series:
+    """ATR% percentile rank in its lookback window. 0=calmest, 1=most volatile."""
+    def _rank(x: np.ndarray) -> float:
+        return float((x[:-1] < x[-1]).sum()) / max(len(x) - 1, 1)
+    return atr_pct.rolling(lookback, min_periods=20).apply(_rank, raw=True)
+
+
 def calculate_fib_position(high: pd.Series, low: pd.Series, close: pd.Series,
                            lookback: int = 120) -> pd.Series:
     """
@@ -273,6 +379,32 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df["price_vs_ma20_pct"] = (close - df["ma20"]) / df["ma20"] * 100
     df["price_vs_ma50_pct"] = (close - df["ma50"]) / df["ma50"] * 100
 
+    # -- Enhanced: EMA crossover, oscillators, Ichimoku, Asian-market factors --
+    ema9  = calculate_ema(close, 9)
+    ema21 = calculate_ema(close, 21)
+    df["ema9_ema21_diff"] = (ema9 - ema21) / close.replace(0, np.nan) * 100
+
+    df["cci_20"] = calculate_cci(high, low, close, period=20)
+    df["mfi_14"] = calculate_mfi(high, low, close, volume, period=14)
+    df["cmf_20"] = calculate_cmf(high, low, close, volume, period=20)
+
+    df["supertrend_dir"] = calculate_supertrend(high, low, close)
+
+    cloud_pos, tk_pos = calculate_ichimoku_signals(high, low, close)
+    df["ichimoku_cloud"] = cloud_pos   # +1 above, 0 inside, -1 below
+    df["ichimoku_tk"]    = tk_pos      # +1 tenkan>kijun, -1 bearish
+
+    h52, l52 = calculate_52w_levels(high, low, close)
+    df["pct_from_52w_high"] = h52      # lower = nearer 52w high = bullish zone
+    df["pct_from_52w_low"]  = l52      # lower = nearer 52w low  = danger zone
+
+    df["vol_regime"] = calculate_vol_regime(df["atr_pct"])
+
+    # Overnight gap (gap-up/down patterns matter especially for Asian markets)
+    open_p = df.get("Open", close)
+    df["gap_pct"] = ((open_p - close.shift(1)) /
+                     close.shift(1).replace(0, np.nan) * 100)
+
     # -- Training target: 3-day forward return (better signal/noise than 1d) --
     df["target"] = (close.shift(-3) > close).astype(int)
 
@@ -331,6 +463,18 @@ def get_latest_indicators(df: pd.DataFrame) -> dict:
         "fib_dist_38":   safe(last.get("fib_dist_38")),
         "fib_dist_50":   safe(last.get("fib_dist_50")),
         "fib_dist_62":   safe(last.get("fib_dist_62")),
+        # Enhanced indicators
+        "ema9_ema21_diff":    safe(last.get("ema9_ema21_diff")),
+        "cci_20":             safe(last.get("cci_20")),
+        "mfi_14":             safe(last.get("mfi_14")),
+        "cmf_20":             safe(last.get("cmf_20")),
+        "supertrend_dir":     safe(last.get("supertrend_dir")),
+        "ichimoku_cloud":     safe(last.get("ichimoku_cloud")),
+        "ichimoku_tk":        safe(last.get("ichimoku_tk")),
+        "pct_from_52w_high":  safe(last.get("pct_from_52w_high")),
+        "pct_from_52w_low":   safe(last.get("pct_from_52w_low")),
+        "vol_regime":         safe(last.get("vol_regime")),
+        "gap_pct":            safe(last.get("gap_pct")),
         # Scalars from full-series analysis
         "rsi_divergence":  float(rsi_div),
         "macd_divergence": float(macd_div),
