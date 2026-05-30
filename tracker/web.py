@@ -1064,15 +1064,17 @@ def create_app() -> Flask:
                 continue
             price = s.get("price") or 0
             ma50  = s.get("ma50")
+            up_prob = s.get("uptrend_prob")
             out[sym.lower()] = {
-                "sym":   sym,
-                "price": price,
-                "chg":   s.get("change_pct"),
-                "vol":   s.get("volume"),
-                "rsi":   s.get("rsi"),
-                "vs":    round((price - ma50) / ma50 * 100, 2) if ma50 and price else None,
-                "pred":  s.get("prediction") or "NEUTRAL",
-                "conf":  round((s.get("prediction_confidence") or 0) * 100),
+                "sym":    sym,
+                "price":  price,
+                "chg":    s.get("change_pct"),
+                "vol":    s.get("volume"),
+                "rsi":    s.get("rsi"),
+                "vs":     round((price - ma50) / ma50 * 100, 2) if ma50 and price else None,
+                "pred":   s.get("prediction") or "NEUTRAL",
+                "conf":   round((s.get("prediction_confidence") or 0) * 100),
+                "uptrd":  round(up_prob, 1) if up_prob is not None else None,
             }
         resp = Response(
             _json.dumps({"ts": _dt.now().strftime("%H:%M:%S"), "stocks": out}),
@@ -1404,7 +1406,7 @@ def create_app() -> Flask:
 
             wl_rows += (
                 f'<tr class="wl-sect-row" data-sid="{sect_id}">'
-                f'<td colspan="8"><div class="wl-sect-toggle">'
+                f'<td colspan="9"><div class="wl-sect-toggle">'
                 f'<span style="color:{color}">{sect}</span>'
                 f'<span class="wl-sect-count">({len(syms_in_sect)})</span>'
                 f'<span class="wl-sect-chev">&#x25BE;</span>'
@@ -1418,8 +1420,11 @@ def create_app() -> Flask:
                 vol   = s.get("volume") or 0
                 rsi   = s.get("rsi")
                 ma50  = s.get("ma50")
-                pred  = s.get("prediction") or "NEUTRAL"
-                conf  = (s.get("prediction_confidence") or 0) * 100
+                pred        = s.get("prediction") or "NEUTRAL"
+                conf        = (s.get("prediction_confidence") or 0) * 100
+                up_prob     = s.get("uptrend_prob")
+                up_str      = f"{up_prob:.0f}%" if up_prob is not None else "—"
+                up_cls      = "up" if (up_prob or 0) >= 60 else ("down" if (up_prob or 0) <= 35 else "wl-na")
 
                 chg_cls = "up" if chg >= 0 else "down"
                 chg_str = f"+{chg:.2f}%" if chg >= 0 else f"{chg:.2f}%"
@@ -1461,6 +1466,7 @@ def create_app() -> Flask:
                     f'<td class="wl-vs {vs_cls}">{vs_str}</td>'
                     f'<td class="wl-sig"><span class="wl-badge {sig_cls}">{sig_label}</span></td>'
                     f'<td class="wl-conf">{conf:.0f}%</td>'
+                    f'<td class="wl-rsi {up_cls}" style="font-size:12px">{up_str}</td>'
                     f'</tr>'
                 )
 
@@ -1468,7 +1474,7 @@ def create_app() -> Flask:
         from datetime import datetime as _wl_dt
         wl_last_refresh = "Updated " + _wl_dt.now().strftime("%H:%M UTC")
         if not wl_rows:
-            wl_rows = '<tr><td colspan="8" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
+            wl_rows = '<tr><td colspan="9" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
 
         # -- flow intelligence (sweeps / dark pool)
         sweep_data   = db.get_all_sweeps_today()
@@ -1989,6 +1995,7 @@ def create_app() -> Flask:
             <th style="text-align:right">vs&nbsp;MA50</th>
             <th style="text-align:right">Signal</th>
             <th style="text-align:right">Conf</th>
+            <th style="text-align:right" title="Probability of ≥10% rally in next 20 trading days (uptrend model)">Uptrend%</th>
           </tr>
         </thead>
         <tbody id="wlBody">
@@ -2194,6 +2201,12 @@ def create_app() -> Flask:
       else                                                {{ cls = 'wl-neut'; lbl = 'Neutral'; }}
       c[6].innerHTML = '<span class="wl-badge ' + cls + '">' + lbl + '</span>';
       c[7].textContent = d.conf + '%';
+
+      if (c.length >= 9 && d.uptrd != null) {{
+        c[8].textContent = Math.round(d.uptrd) + '%';
+        c[8].className = 'wl-rsi ' + (d.uptrd >= 60 ? 'up' : d.uptrd <= 35 ? 'down' : 'wl-na');
+        c[8].style.fontSize = '12px';
+      }}
 
       if (changed) flash(row);
     }});

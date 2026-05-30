@@ -151,6 +151,8 @@ def _migrate_columns() -> None:
             conn.execute("ALTER TABLE stocks ADD COLUMN fib_signal INTEGER DEFAULT 0")
         if stock_cols and "fib_level" not in stock_cols:
             conn.execute("ALTER TABLE stocks ADD COLUMN fib_level TEXT DEFAULT ''")
+        if stock_cols and "uptrend_prob" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN uptrend_prob REAL")
         # subscribers table
         try:
             sub_cols = [r[1] for r in conn.execute("PRAGMA table_info(subscribers)").fetchall()]
@@ -210,12 +212,12 @@ def upsert_stock(data: dict) -> None:
                 (symbol, price, prev_close, change_pct, volume, avg_volume,
                  rsi, macd, macd_signal, bb_pband, ma20, ma50, ma200,
                  prediction, prediction_confidence, rule_signals, sector,
-                 fib_signal, fib_level, last_updated)
+                 fib_signal, fib_level, uptrend_prob, last_updated)
             VALUES
                 (:symbol, :price, :prev_close, :change_pct, :volume, :avg_volume,
                  :rsi, :macd, :macd_signal, :bb_pband, :ma20, :ma50, :ma200,
                  :prediction, :prediction_confidence, :rule_signals, :sector,
-                 :fib_signal, :fib_level, :last_updated)
+                 :fib_signal, :fib_level, :uptrend_prob, :last_updated)
             ON CONFLICT(symbol) DO UPDATE SET
                 price=excluded.price, prev_close=excluded.prev_close,
                 change_pct=excluded.change_pct, volume=excluded.volume,
@@ -229,6 +231,7 @@ def upsert_stock(data: dict) -> None:
                 sector=excluded.sector,
                 fib_signal=excluded.fib_signal,
                 fib_level=excluded.fib_level,
+                uptrend_prob=excluded.uptrend_prob,
                 last_updated=excluded.last_updated
         """, data)
 

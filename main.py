@@ -101,6 +101,7 @@ def refresh_all(config: dict) -> None:
 
                 sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
                 _fib = ind_data.get("fib_levels", {})
+                uptrend_prob = pred_mod.get_uptrend_probability(ind_data)
                 stock_row = {
                     "symbol": sym,
                     "price": snap["price"],
@@ -121,6 +122,7 @@ def refresh_all(config: dict) -> None:
                     "sector": sector,
                     "fib_signal": int(_fib.get("signal", 0)),
                     "fib_level":  _fib.get("signal_level", ""),
+                    "uptrend_prob": uptrend_prob,
                 }
                 db.upsert_stock(stock_row)
                 stocks_out.append(stock_row)

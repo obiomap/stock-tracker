@@ -16,8 +16,10 @@ from . import indicators as ind
 
 warnings.filterwarnings("ignore")
 
-MODEL_PATH  = Path(__file__).parent.parent / "models" / "stock_model.pkl"
-SCALER_PATH = Path(__file__).parent.parent / "models" / "scaler.pkl"
+MODEL_PATH          = Path(__file__).parent.parent / "models" / "stock_model.pkl"
+SCALER_PATH         = Path(__file__).parent.parent / "models" / "scaler.pkl"
+UPTREND_MODEL_PATH  = Path(__file__).parent.parent / "models" / "uptrend_model.pkl"
+UPTREND_SCALER_PATH = Path(__file__).parent.parent / "models" / "uptrend_scaler.pkl"
 
 # Feature set used for ML training and inference (30 features)
 FEATURE_COLS = [
@@ -222,6 +224,44 @@ def get_model_feature_importance() -> dict:
         return {}
     fi = bundle.get("feature_importance", {})
     return dict(sorted(fi.items(), key=lambda x: x[1], reverse=True))
+
+
+def _load_uptrend_model():
+    """Load uptrend model bundle and scaler. Returns (bundle, scaler) or (None, None)."""
+    try:
+        import joblib
+        if UPTREND_MODEL_PATH.exists() and UPTREND_SCALER_PATH.exists():
+            bundle = joblib.load(UPTREND_MODEL_PATH)
+            scaler = joblib.load(UPTREND_SCALER_PATH)
+            return bundle, scaler
+    except Exception:
+        pass
+    return None, None
+
+
+def get_uptrend_probability(ind_data: dict) -> Optional[float]:
+    """
+    Return probability (0-100) that this stock will rally >=10% in 20 trading days.
+    Uses the specialised GBM trained by the rally study on NVDA/TSLA/AAPL.
+    The model CV AUC was inverted (<0.5), so we return 1-p to correct direction.
+    """
+    bundle, scaler = _load_uptrend_model()
+    if bundle is None:
+        return None
+    try:
+        gbm         = bundle["gbm"]
+        imputer     = bundle["imputer"]
+        feat_cols   = bundle["feature_cols"]
+        vals = [ind_data.get(col, np.nan) for col in feat_cols]
+        X = np.array(vals, dtype=float).reshape(1, -1)
+        X = imputer.transform(X)
+        X = scaler.transform(X)
+        raw_prob = gbm.predict_proba(X)[0][1]
+        # Invert because the CV AUC was 0.302 (inverted predictor)
+        corrected = round((1.0 - raw_prob) * 100, 1)
+        return corrected
+    except Exception:
+        return None
 
 
 def get_model_metadata() -> dict:
