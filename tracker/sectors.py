@@ -45,6 +45,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "META": "LLaMA open-source models, AI-powered ad targeting",
             "AMZN": "AWS Bedrock AI platform, Alexa+, Trainium chips",
             "PLTR": "Palantir — AI analytics for enterprise and defense",
+            "CRWV": "CoreWeave — AI cloud GPU provider; first to deploy Nvidia Vera Rubin NVL72",
             "AI":   "C3.ai — enterprise AI software applications",
             "SOUN": "SoundHound — voice AI for automotive and restaurants",
             "BBAI": "BigBear.ai — defense and intelligence AI",
@@ -317,6 +318,7 @@ SECTOR_CATALOG: dict[str, dict] = {
             "PLUG": "Plug Power — hydrogen fuel cells and electrolyzers",
             "EQT":  "EQT Corp — largest US natural gas producer; Appalachian Basin operations",
             "AR":   "Antero Resources — natural gas and NGL producer; low-cost Appalachian assets",
+            "FCEL": "FuelCell Energy — direct fuel cell power plants; clean hydrogen and baseload generation",
         },
     },
     "Consumer": {

@@ -6,6 +6,8 @@ from email.mime.text import MIMEText
 from typing import Optional
 from . import database as db
 from . import sms as sms_mod
+from . import correlation as corr_mod
+from . import news as news_mod
 
 
 # ── Resend (preferred) ────────────────────────────────────────────────────────
@@ -234,7 +236,9 @@ def _html_alert_row(bg: str, label: str, symbol: str, message: str) -> str:
     </tr>"""
 
 
-def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[dict]) -> str:
+def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[dict],
+                       focus_symbols: list[str] | None = None,
+                       news_signals: dict | None = None) -> str:
     """
     Build the subscriber alert email containing exactly three sections:
       1. AI Top Signals       — high-confidence BULLISH / BEARISH predictions
@@ -281,6 +285,11 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     def _empty_row(cols: int, msg: str = "No data for today") -> str:
         return (f'<tr><td colspan="{cols}" style="padding:14px;color:#475569;'
                 f'text-align:center;font-size:13px">{msg}</td></tr>')
+
+    # ── 0. FOCUS GROUP ────────────────────────────────────────────────────────
+    _focus_syms = focus_symbols or corr_mod.DEFAULT_FOCUS_GROUP
+    sec_focus = corr_mod.build_focus_html_section(stocks, _focus_syms)
+    sec_news  = news_mod.build_news_html_section(news_signals or {})
 
     # ── 1. AI TOP SIGNALS ─────────────────────────────────────────────────────
     sig_color = {"BULLISH": "#22c55e", "BEARISH": "#ef4444"}
@@ -474,6 +483,8 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     <p style="margin:0;color:#64748b;font-size:13px">{now} UTC</p>
   </div>
 
+  {sec_focus}
+  {sec_news}
   {sec_ai}
   {sec_vol}
   {sec_movers}
@@ -787,6 +798,14 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
     ml_thresh     = alert_cfg.get("ml_confidence_threshold", 0.70)
     vol_spike     = alert_cfg.get("volume_spike_ratio", 2.0)
 
+    # ── Focus group config ────────────────────────────────────────────────────
+    focus_groups    = config.get("focus_groups", {})
+    focus_syms: set[str] = set()
+    focus_threshold = price_thresh   # default; overridden per group below
+    for grp in focus_groups.values():
+        focus_syms.update(grp.get("symbols", []))
+        focus_threshold = min(focus_threshold, grp.get("price_change_threshold", price_thresh))
+
     new_alerts: list[dict] = []
 
     for s in stocks:
@@ -795,7 +814,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         rsi  = s.get("rsi")
         vol_ratio = (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1)
 
-        if abs(chg) >= price_thresh:
+        effective_thresh = focus_threshold if sym in focus_syms else price_thresh
+        if abs(chg) >= effective_thresh:
             direction = "surged" if chg > 0 else "dropped"
             msg = f"{sym} {direction} {chg:+.2f}% today"
             severity = "HIGH" if abs(chg) >= price_thresh * 1.5 else "MEDIUM"
@@ -844,13 +864,40 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             db.log_alert("EARNINGS_UPCOMING", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
 
+    # ── Focus group: correlation divergence ───────────────────────────────────
+    if focus_syms:
+        divergences = corr_mod.compute_divergence(stocks, list(focus_syms))
+        for div in divergences:
+            sym = div["symbol"]
+            if not db.was_alert_sent_today("FOCUS_DIVERGENCE", sym):
+                db.log_alert("FOCUS_DIVERGENCE", sym, div["message"], div["severity"])
+                new_alerts.append({"symbol": sym, "message": div["message"],
+                                   "severity": div["severity"]})
+
+    # ── Focus group: news catalyst detection ──────────────────────────────────
+    _news_signals: dict = {}
+    if focus_syms:
+        try:
+            _news_signals = news_mod.fetch_news_signals(list(focus_syms))
+            for sym, catalysts in _news_signals.items():
+                for cat in catalysts[:1]:   # one alert per symbol per refresh
+                    alert_type = f"FOCUS_CATALYST_{cat['type']}"
+                    if not db.was_alert_sent_today(alert_type, sym):
+                        msg = f"{sym} [{cat['type']}] {cat['headline']}"
+                        db.log_alert(alert_type, sym, msg, "MEDIUM")
+                        new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+        except Exception as _ne:
+            print(f"[news] fetch error: {_ne}")
+
     if new_alerts:
         stocks_full  = db.get_all_stocks()
         earn_full    = db.get_upcoming_earnings()
         all_alerts   = db.get_recent_alerts(20)
         alerted_syms = set(a["symbol"] for a in new_alerts)
         subject      = f"Stock Alert: {', '.join(sorted(alerted_syms))}"
-        html         = build_email_report(stocks_full, earn_full, all_alerts)
+        html         = build_email_report(stocks_full, earn_full, all_alerts,
+                                          focus_symbols=list(focus_syms),
+                                          news_signals=_news_signals)
         sms_text     = build_sms_summary(stocks_full, alerted_syms)
 
         # Admin notification (email only — admin has no stored phone in config)
