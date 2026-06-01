@@ -75,7 +75,6 @@ SECTOR_CATALOG: dict[str, dict] = {
             "SMCI":  "Super Micro Computer — AI server systems for data centers",
             "HPE":   "Hewlett Packard Enterprise — servers, storage, and hybrid cloud infrastructure",
             "NTAP":  "NetApp — enterprise data storage and cloud data management",
-            "PSTG":  "Pure Storage — all-flash storage arrays for AI and cloud workloads",
             "DDOG":  "Datadog — cloud observability and security monitoring",
             "RBLX":  "Roblox — metaverse gaming platform, 80M+ daily users",
             "RDDT":  "Reddit — social media platform and community data moat",
