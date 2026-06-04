@@ -814,16 +814,31 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         rsi  = s.get("rsi")
         vol_ratio = (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1)
 
-        effective_thresh = focus_threshold if sym in focus_syms else price_thresh
+        # Per-symbol thresholds — crypto needs a much bigger move to be signal-worthy
+        is_crypto = sym.endswith("-USD")
+        if is_crypto:
+            effective_thresh  = 4.0   # crypto price alert: 4%
+            min_move_for_ml   = 2.0   # ML alert only fires when crypto actually moved
+        elif sym in focus_syms:
+            effective_thresh  = focus_threshold   # 1.5% for focus group
+            min_move_for_ml   = 0.5
+        else:
+            effective_thresh  = price_thresh      # 3% default
+            min_move_for_ml   = 0.5
+
+        # Movement confirmed = price moved enough OR volume spiked (unusual interest)
+        movement_confirmed = abs(chg) >= min_move_for_ml or vol_ratio >= 1.5
+
         if abs(chg) >= effective_thresh:
             direction = "surged" if chg > 0 else "dropped"
             msg = f"{sym} {direction} {chg:+.2f}% today"
-            severity = "HIGH" if abs(chg) >= price_thresh * 1.5 else "MEDIUM"
+            severity = "HIGH" if abs(chg) >= effective_thresh * 1.5 else "MEDIUM"
             if not db.was_alert_sent_today(f"PRICE_{direction.upper()}", sym):
                 db.log_alert(f"PRICE_{direction.upper()}", sym, msg, severity)
                 new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
 
-        if rsi is not None:
+        # RSI extremes: only alert when price is also moving (avoids noisy flat days)
+        if rsi is not None and movement_confirmed:
             if rsi <= rsi_os and not db.was_alert_sent_today("RSI_OVERSOLD", sym):
                 msg = f"{sym} RSI={rsi:.0f} -- oversold, potential bounce"
                 db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
@@ -841,13 +856,17 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         pred   = predictions.get(sym, {})
         conf   = pred.get("confidence", 0)
         signal = pred.get("signal", "NEUTRAL")
-        if conf >= ml_thresh and signal != "NEUTRAL" and not db.was_alert_sent_today(f"ML_{signal}", sym):
+
+        # ML alert: require actual market movement — no alert on stagnant stocks
+        if (conf >= ml_thresh and signal != "NEUTRAL" and movement_confirmed
+                and not db.was_alert_sent_today(f"ML_{signal}", sym)):
             msg = f"{sym} high-confidence {signal} signal ({conf*100:.0f}%)"
             db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
 
-        # Combined conviction: AI signal + volume surge = strongest signal
+        # Combined conviction: AI signal + volume surge + price movement = strongest signal
         if (vol_ratio >= 2.0 and conf >= 0.60 and signal != "NEUTRAL"
+                and abs(chg) >= min_move_for_ml
                 and not db.was_alert_sent_today("VOL_CONFIRMED", sym)):
             msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
                    f"— conviction signal")

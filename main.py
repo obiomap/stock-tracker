@@ -82,6 +82,20 @@ def refresh_all(config: dict) -> None:
         hist_data = {}
         earnings_map = {e["symbol"]: e["days_until"] for e in _state["earnings"]}
 
+        # Compute market regime once per refresh using SPY snapshot
+        # +1 = SPY above MA20 (bull), -1 = below (bear), 0 = unknown
+        def _market_regime(snaps_dict: dict) -> float:
+            spy_snap = snaps_dict.get("SPY", {})
+            price    = spy_snap.get("price") or 0
+            ma20     = spy_snap.get("ma20") or 0
+            if price and ma20:
+                diff_pct = (price - ma20) / ma20
+                if diff_pct >  0.01: return  1.0
+                if diff_pct < -0.01: return -1.0
+            return 0.0
+
+        market_regime = _market_regime(snaps)
+
         for sym in watchlist:
             try:
                 snap = snaps.get(sym)
@@ -96,7 +110,9 @@ def refresh_all(config: dict) -> None:
 
                 ind_data = ind.get_latest_indicators(hist)
                 days_to_earn = earnings_map.get(sym)
-                prediction = pred_mod.generate_prediction(sym, ind_data, snap, days_to_earn)
+                prediction = pred_mod.generate_prediction(
+                    sym, ind_data, snap, days_to_earn, market_regime=market_regime
+                )
                 predictions_out[sym] = prediction
 
                 sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))

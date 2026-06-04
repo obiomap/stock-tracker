@@ -544,10 +544,14 @@ def _rule_signals(ind_data: dict, stock_snap: dict,
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
-                         days_to_earnings: Optional[int]) -> dict:
+                         days_to_earnings: Optional[int],
+                         market_regime: float = 0.0) -> dict:
     """
     Generate a final BULLISH / NEUTRAL / BEARISH prediction with confidence.
     Blends rule-based signals (35%) with ML ensemble probability (65%).
+
+    market_regime: +1.0 = broad market bull (SPY above MA20),
+                   -1.0 = broad market bear (SPY below MA20), 0 = neutral/unknown.
     """
     signals = _rule_signals(ind_data, stock_snap, days_to_earnings)
 
@@ -566,10 +570,16 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
     ml_prob = _ml_predict(ind_data)
 
     if ml_prob is not None:
-        rule_prob    = (weighted_score + 1) / 2   # -1..1 -> 0..1
+        rule_prob     = (weighted_score + 1) / 2   # -1..1 -> 0..1
         combined_prob = rule_prob * 0.35 + ml_prob * 0.65
     else:
         combined_prob = (weighted_score + 1) / 2
+
+    # Market regime nudge: bull market lifts all boats, bear market discounts bulls
+    # Capped at ±5% so regime alone never flips a signal
+    if market_regime != 0.0:
+        regime_nudge  = market_regime * 0.05
+        combined_prob = float(np.clip(combined_prob + regime_nudge, 0.0, 1.0))
 
     if combined_prob >= 0.60:
         signal = "BULLISH"
@@ -580,6 +590,11 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
 
     # Confidence: distance from 0.5 scaled to 0-1
     confidence = min(abs(combined_prob - 0.5) * 2, 1.0)
+
+    # Confluence penalty: when indicators strongly disagree, cap confidence
+    # so split-signal predictions don't fire high-priority alerts
+    if confluence < 0.3 and total_weight > 0:
+        confidence *= 0.7
 
     return {
         "symbol":        symbol,
@@ -592,4 +607,5 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
         "ml_available":  ml_prob is not None,
         "n_signals":     len(signals),
         "total_weight":  total_weight,
+        "market_regime": market_regime,
     }
