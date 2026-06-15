@@ -123,7 +123,7 @@ DEFAULT_CONFIG = {
         "CEG", "VST", "NRG",                                # Power generators (nuclear + gas, AI data center demand)
         "CCJ", "LEU",                                       # Uranium miners
         # AI Infrastructure
-        "HPE", "NTAP", "PSTG",                              # Servers, storage, all-flash arrays
+        "HPE", "NTAP",                                      # Servers, storage, all-flash arrays
         # Defense Primes
         "NOC", "GD", "HII",                                 # Northrop, General Dynamics, Huntington Ingalls
         # Fintech additions
@@ -288,7 +288,7 @@ DEFAULT_CONFIG = {
         "NRG":   "Energy & Clean Energy",
         "CCJ":   "Commodities & Mining",  "LEU":  "Commodities & Mining",
         # AI Infrastructure
-        "HPE":   "Technology", "NTAP":  "Technology", "PSTG":  "Technology",
+        "HPE":   "Technology", "NTAP":  "Technology",
         # Defense Primes
         "NOC":   "Industrials", "GD":   "Industrials", "HII":   "Industrials",
         # Fintech
