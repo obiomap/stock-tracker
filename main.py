@@ -148,7 +148,7 @@ def refresh_all(config: dict) -> None:
                 print(f"[refresh] {sym}: exception — {_e}")
 
         earnings_list = earn_mod.refresh_earnings_calendar(watchlist, hist_data)
-        new_alerts = alert_mod.check_and_fire_alerts(stocks_out, earnings_list, predictions_out, config)
+        new_alerts = alert_mod.check_and_fire_alerts(stocks_out, earnings_list, predictions_out, config, market_regime=market_regime)
 
         # ── Prediction accuracy tracking ──────────────────────────────────────
         # Log today's predictions and score any that are 5+ trading days old

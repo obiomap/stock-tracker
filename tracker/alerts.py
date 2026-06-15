@@ -788,8 +788,78 @@ def send_options_alert(new_recs: list[dict], config: dict) -> int:
     return counts["email_sent"] + counts["sms_sent"]
 
 
+def _tech_context(s: dict, pred: dict, vol_ratio: float) -> tuple[int, str]:
+    """
+    Score alert signal quality 0-100 and build a compact context string.
+    Checks RSI zone, volume multiple, MA alignment, MACD direction, and
+    rule-signal confluence from the predictor.
+    Returns (quality_score, context_str).
+    """
+    score = 0
+    parts: list[str] = []
+
+    rsi    = s.get("rsi")
+    price  = s.get("price") or 0
+    ma20   = s.get("ma20")
+    ma50   = s.get("ma50")
+    ma200  = s.get("ma200")
+    macd   = s.get("macd")
+    macd_s = s.get("macd_signal")
+
+    # RSI zone
+    if rsi is not None:
+        if rsi <= 25:   rsi_label = "extremely oversold"
+        elif rsi <= 35: rsi_label = "oversold"
+        elif rsi >= 75: rsi_label = "extremely overbought"
+        elif rsi >= 65: rsi_label = "overbought"
+        elif rsi >= 55: rsi_label = "bullish zone"
+        else:           rsi_label = "bearish zone"
+        parts.append(f"RSI {rsi:.0f} ({rsi_label})")
+        if rsi <= 30 or rsi >= 70:
+            score += 15  # extreme RSI confirms momentum is genuine
+
+    # Volume quality
+    parts.append(f"Vol {vol_ratio:.1f}×")
+    if vol_ratio >= 3.0:   score += 25
+    elif vol_ratio >= 2.0: score += 20
+    elif vol_ratio >= 1.5: score += 12
+    elif vol_ratio >= 1.2: score += 6
+
+    # MA alignment
+    ma_pos: list[str] = []
+    for label, val in (("MA20", ma20), ("MA50", ma50), ("MA200", ma200)):
+        if price and val:
+            ma_pos.append(f"{'↑' if price >= val else '↓'}{label}")
+            if price >= val:
+                score += 5
+    if ma_pos:
+        parts.append(" ".join(ma_pos))
+
+    # MACD direction
+    if macd is not None and macd_s is not None:
+        if macd > macd_s:
+            parts.append("MACD↑")
+            score += 8
+        else:
+            parts.append("MACD↓")
+
+    # Rule-signal confluence from predictor
+    rule_sigs = pred.get("rule_signals", [])
+    if rule_sigs:
+        bull_w = sum(r["weight"] for r in rule_sigs if r.get("direction") == 1)
+        bear_w = sum(r["weight"] for r in rule_sigs if r.get("direction") == -1)
+        total  = bull_w + bear_w
+        if total > 0:
+            dominant = max(bull_w, bear_w) / total
+            score += int(dominant * 20)
+            parts.append(f"{int(dominant * 100)}% signals aligned")
+
+    return min(score, 100), " · ".join(parts)
+
+
 def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
-                          predictions: dict, config: dict) -> list[dict]:
+                          predictions: dict, config: dict,
+                          market_regime: float = 0.0) -> list[dict]:
     alert_cfg = config.get("alerts", {})
     price_thresh  = alert_cfg.get("price_change_threshold", 3.0)
     rsi_ob        = alert_cfg.get("rsi_overbought", 70)
@@ -829,47 +899,66 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         # Movement confirmed = price moved enough OR volume spiked (unusual interest)
         movement_confirmed = abs(chg) >= min_move_for_ml or vol_ratio >= 1.5
 
-        if abs(chg) >= effective_thresh:
-            direction = "surged" if chg > 0 else "dropped"
-            msg = f"{sym} {direction} {chg:+.2f}% today"
-            severity = "HIGH" if abs(chg) >= effective_thresh * 1.5 else "MEDIUM"
-            if not db.was_alert_sent_today(f"PRICE_{direction.upper()}", sym):
-                db.log_alert(f"PRICE_{direction.upper()}", sym, msg, severity)
-                new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
-
-        # RSI extremes: only alert when price is also moving (avoids noisy flat days)
-        if rsi is not None and movement_confirmed:
-            if rsi <= rsi_os and not db.was_alert_sent_today("RSI_OVERSOLD", sym):
-                msg = f"{sym} RSI={rsi:.0f} -- oversold, potential bounce"
-                db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
-                new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
-            elif rsi >= rsi_ob and not db.was_alert_sent_today("RSI_OVERBOUGHT", sym):
-                msg = f"{sym} RSI={rsi:.0f} -- overbought, potential pullback"
-                db.log_alert("RSI_OVERBOUGHT", sym, msg, "MEDIUM")
-                new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
-
-        if vol_ratio >= vol_spike and not db.was_alert_sent_today("VOLUME_SPIKE", sym):
-            msg = f"{sym} volume spike {vol_ratio:.1f}x avg -- unusual activity"
-            db.log_alert("VOLUME_SPIKE", sym, msg, "MEDIUM")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
-
         pred   = predictions.get(sym, {})
         conf   = pred.get("confidence", 0)
         signal = pred.get("signal", "NEUTRAL")
 
+        if abs(chg) >= effective_thresh:
+            direction = "surged" if chg > 0 else "dropped"
+            severity  = "HIGH" if abs(chg) >= effective_thresh * 1.5 else "MEDIUM"
+            alert_type = f"PRICE_{direction.upper()}"
+            # Skip sub-average-volume moves on regular stocks (phantom moves on thin tape)
+            vol_ok = is_crypto or vol_ratio >= 1.1
+            if vol_ok and not db.was_alert_sent_today(alert_type, sym):
+                quality, ctx = _tech_context(s, pred, vol_ratio)
+                regime_tag = " ⚠ bear regime" if market_regime < 0 else ""
+                msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | {ctx}"
+                db.log_alert(alert_type, sym, msg, severity)
+                new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
+
+        # RSI extremes: only alert when price is also moving (avoids noisy flat days)
+        # Secondary gate: require elevated volume OR clear MA breach to filter noise
+        if rsi is not None and movement_confirmed:
+            price_val = s.get("price") or 0
+            if rsi <= rsi_os and not db.was_alert_sent_today("RSI_OVERSOLD", sym):
+                below_ma20 = s.get("ma20") and price_val < (s.get("ma20") or 0) * 1.01
+                if vol_ratio >= 1.2 or below_ma20:
+                    quality, ctx = _tech_context(s, pred, vol_ratio)
+                    msg = f"{sym} RSI={rsi:.0f} — oversold, watch for bounce | {ctx}"
+                    db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
+                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+            elif rsi >= rsi_ob and not db.was_alert_sent_today("RSI_OVERBOUGHT", sym):
+                above_ma50 = s.get("ma50") and price_val > (s.get("ma50") or 0) * 1.05
+                if vol_ratio >= 1.2 or above_ma50:
+                    quality, ctx = _tech_context(s, pred, vol_ratio)
+                    msg = f"{sym} RSI={rsi:.0f} — overbought, potential pullback | {ctx}"
+                    db.log_alert("RSI_OVERBOUGHT", sym, msg, "MEDIUM")
+                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+
+        if vol_ratio >= vol_spike and not db.was_alert_sent_today("VOLUME_SPIKE", sym):
+            direction_str = "bullish" if chg > 0.5 else "bearish" if chg < -0.5 else "neutral"
+            quality, ctx = _tech_context(s, pred, vol_ratio)
+            msg = f"{sym} {vol_ratio:.1f}× volume spike ({direction_str}) | {ctx}"
+            db.log_alert("VOLUME_SPIKE", sym, msg, "MEDIUM")
+            new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+
         # ML alert: require actual market movement — no alert on stagnant stocks
+        # Also require minimum quality score so confidence isn't the only gate
         if (conf >= ml_thresh and signal != "NEUTRAL" and movement_confirmed
                 and not db.was_alert_sent_today(f"ML_{signal}", sym)):
-            msg = f"{sym} high-confidence {signal} signal ({conf*100:.0f}%)"
-            db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
+            quality, ctx = _tech_context(s, pred, vol_ratio)
+            if quality >= 25:
+                msg = f"{sym} {signal} {conf*100:.0f}% confidence | {ctx}"
+                db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
 
         # Combined conviction: AI signal + volume surge + price movement = strongest signal
         if (vol_ratio >= 2.0 and conf >= 0.60 and signal != "NEUTRAL"
                 and abs(chg) >= min_move_for_ml
                 and not db.was_alert_sent_today("VOL_CONFIRMED", sym)):
+            quality, ctx = _tech_context(s, pred, vol_ratio)
             msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
-                   f"— conviction signal")
+                   f"— conviction | {ctx}")
             db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
 
