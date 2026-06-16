@@ -1,3 +1,4 @@
+import logging
 import time
 import warnings
 from typing import Optional
@@ -5,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # yfinance >=1.3 uses curl_cffi internally for browser impersonation —
 # do NOT pass a requests.Session; let yfinance handle its own session.
 
