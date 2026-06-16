@@ -66,6 +66,7 @@ def refresh_all(config: dict) -> None:
     try:
         import random as _random
         watchlist = list(config["watchlist"])
+        print(f"[refresh] starting — {len(watchlist)} symbols", flush=True)
         # Prioritise stocks not yet in DB so newly added stocks always get fetched first
         _db_syms   = {s["symbol"] for s in db.get_all_stocks()}
         _missing   = [s for s in watchlist if s not in _db_syms]
@@ -74,8 +75,10 @@ def refresh_all(config: dict) -> None:
         _random.shuffle(_present)
         watchlist  = _missing + _present   # missing first, then random rotation
         if _missing:
-            print(f"[refresh] prioritising {len(_missing)} unloaded stocks: {_missing}")
+            print(f"[refresh] prioritising {len(_missing)} unloaded stocks: {_missing}", flush=True)
+        print(f"[refresh] fetching snapshots...", flush=True)
         snaps = fetcher.fetch_multiple_snapshots(watchlist)
+        print(f"[refresh] snapshots done — {len(snaps)} returned", flush=True)
 
         stocks_out = []
         predictions_out = {}
