@@ -2,12 +2,14 @@
 predictor.py -- Signal generation and ML prediction engine.
 
 Architecture:
-  - Rule engine:  weighted directional signals from 15+ technical indicators
-  - ML ensemble: RandomForest + ExtraTrees + HistGradientBoosting (3-model blend)
-  - Final blend: 35% rules / 65% ML (ML weighted higher when trained)
-  - Features:    15 technical features, 3-day forward target
+  - Rule engine:   weighted directional signals from 22+ technical indicators
+  - ML ensemble:   multi-timeframe RF + ET + HistGBM trained for 3d / 5d / 10d
+  - Final blend:   35% rules / 65% ML
+  - High-confidence flag: all 3 timeframes agree at ≥70% probability
+  - Per-symbol accuracy weighting from historical predictions_log
 """
 import warnings
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -20,6 +22,7 @@ MODEL_PATH          = Path(__file__).parent.parent / "models" / "stock_model.pkl
 SCALER_PATH         = Path(__file__).parent.parent / "models" / "scaler.pkl"
 UPTREND_MODEL_PATH  = Path(__file__).parent.parent / "models" / "uptrend_model.pkl"
 UPTREND_SCALER_PATH = Path(__file__).parent.parent / "models" / "uptrend_scaler.pkl"
+ADV_MODEL_PATH      = Path(__file__).parent.parent / "models" / "advanced_model.pkl"
 
 # Feature set used for ML training and inference (30 features)
 FEATURE_COLS = [
@@ -53,25 +56,78 @@ FEATURE_COLS = [
     "gap_pct",            # Overnight gap % (key pattern for Asian markets)
 ]
 
+# Interaction features derived from base features at train/predict time
+_INTERACTION_NAMES = {
+    "rsi_vol_quality",    # RSI direction × volume_ratio — directional momentum quality
+    "mom_obv_agreement",  # momentum_5d × obv_roc_5d — price-volume consensus
+    "macd_rsi_alignment", # sign(macd_hist) × sign(rsi-50) — dual confirmation
+    "trend_vol_strength", # (adx/50) × volume_ratio — trending + elevated activity
+}
 
-# ── Model I/O ─────────────────────────────────────────────────────────────────
-
-# Feature columns used by the v1 model (before the upgrade) -- kept for
-# backward-compat so old saved models load correctly until the user retrains.
+# V1 backward-compat feature list (for loading old saved models pre-upgrade)
 _V1_FEATURE_COLS = [
     "rsi", "macd_hist", "volume_ratio", "bb_pband",
     "momentum_5d", "momentum_20d",
 ]
 
 
+# ── Interaction features ──────────────────────────────────────────────────────
+
+def _add_interaction_features(
+        X_imp: np.ndarray, base_cols: list[str]
+) -> tuple[np.ndarray, list[str]]:
+    """
+    Compute cross-product features from an already-imputed base matrix.
+    Called identically at training time and inference time so shapes always match.
+    Returns (X_augmented, augmented_col_names).
+    """
+    def _idx(col: str) -> int:
+        return base_cols.index(col) if col in base_cols else -1
+
+    rsi_i = _idx("rsi");       vol_i = _idx("volume_ratio")
+    mom_i = _idx("momentum_5d"); obv_i = _idx("obv_roc_5d")
+    mh_i  = _idx("macd_hist"); adx_i = _idx("adx")
+
+    extras: list[np.ndarray] = []
+    extra_names: list[str]   = []
+
+    # RSI direction × volume (high when RSI is directional AND vol confirms)
+    if rsi_i >= 0 and vol_i >= 0:
+        rsi_norm = (X_imp[:, rsi_i] - 50.0) / 50.0
+        extras.append((rsi_norm * X_imp[:, vol_i]).reshape(-1, 1))
+        extra_names.append("rsi_vol_quality")
+
+    # momentum_5d × obv_roc_5d (positive = price & volume agree on direction)
+    if mom_i >= 0 and obv_i >= 0:
+        m = np.clip(X_imp[:, mom_i] / 10.0, -3.0, 3.0)
+        o = np.clip(X_imp[:, obv_i] / 10.0, -3.0, 3.0)
+        extras.append((m * o).reshape(-1, 1))
+        extra_names.append("mom_obv_agreement")
+
+    # sign(macd_hist) × sign(rsi-50) → +1 / 0 / −1 dual confirmation
+    if mh_i >= 0 and rsi_i >= 0:
+        alignment = np.sign(X_imp[:, mh_i]) * np.sign(X_imp[:, rsi_i] - 50.0)
+        extras.append(alignment.reshape(-1, 1))
+        extra_names.append("macd_rsi_alignment")
+
+    # (adx/50) × volume_ratio (trending hard AND volume elevated)
+    if adx_i >= 0 and vol_i >= 0:
+        adx_norm = np.clip(X_imp[:, adx_i] / 50.0, 0.0, 2.0)
+        extras.append((adx_norm * X_imp[:, vol_i]).reshape(-1, 1))
+        extra_names.append("trend_vol_strength")
+
+    if extras:
+        return np.concatenate([X_imp] + extras, axis=1), list(base_cols) + extra_names
+    return X_imp, list(base_cols)
+
+
 def _load_model():
-    """Load model bundle and scaler. Returns (bundle, scaler) or (None, None)."""
+    """Load legacy model bundle and scaler. Returns (bundle, scaler) or (None, None)."""
     try:
         import joblib
         if MODEL_PATH.exists() and SCALER_PATH.exists():
             bundle = joblib.load(MODEL_PATH)
             scaler = joblib.load(SCALER_PATH)
-            # Support v1 format (bare RandomForest, not a bundle dict)
             if not isinstance(bundle, dict):
                 bundle = {
                     "rf":                 bundle,
@@ -87,93 +143,201 @@ def _load_model():
     return None, None
 
 
+def _load_advanced_model() -> Optional[dict]:
+    """Load the multi-timeframe advanced model bundle or None."""
+    try:
+        import joblib
+        if ADV_MODEL_PATH.exists():
+            return joblib.load(ADV_MODEL_PATH)
+    except Exception:
+        pass
+    return None
+
+
+# ── Training helpers ──────────────────────────────────────────────────────────
+
+def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
+                  base_cols: list[str]) -> dict:
+    """
+    Train RF + ET + HistGBM on one target window.
+    Returns a self-contained bundle with embedded imputer and scaler.
+    Walk-forward split (80/20) gives out-of-sample accuracy and
+    high-confidence (≥70% prob) precision on the held-out 20%.
+    """
+    from sklearn.ensemble import (
+        RandomForestClassifier, ExtraTreesClassifier,
+        HistGradientBoostingClassifier,
+    )
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.impute import SimpleImputer
+
+    imputer = SimpleImputer(strategy="median")
+    X_imp   = imputer.fit_transform(X_raw)
+    X_aug, aug_cols = _add_interaction_features(X_imp, base_cols)
+
+    split      = int(len(X_aug) * 0.80)
+    X_tr, X_te = X_aug[:split], X_aug[split:]
+    y_tr, y_te = y[:split],     y[split:]
+
+    scaler    = StandardScaler()
+    X_tr_s    = scaler.fit_transform(X_tr)
+    X_te_s    = scaler.transform(X_te)
+
+    rf = RandomForestClassifier(
+        n_estimators=300, max_depth=8, min_samples_leaf=8,
+        max_features="sqrt", random_state=42, n_jobs=-1,
+    )
+    rf.fit(X_tr_s, y_tr)
+
+    et = ExtraTreesClassifier(
+        n_estimators=300, max_depth=8, min_samples_leaf=8,
+        max_features="sqrt", random_state=43, n_jobs=-1,
+    )
+    et.fit(X_tr_s, y_tr)
+
+    hgbm = HistGradientBoostingClassifier(
+        max_iter=300, max_depth=6, min_samples_leaf=10,
+        learning_rate=0.04, l2_regularization=0.1, random_state=44,
+    )
+    hgbm.fit(X_tr_s, y_tr)
+
+    # Out-of-sample evaluation
+    if len(y_te) > 0:
+        p_rf   = rf.predict_proba(X_te_s)[:, 1]
+        p_et   = et.predict_proba(X_te_s)[:, 1]
+        p_hgbm = hgbm.predict_proba(X_te_s)[:, 1]
+        blended = p_rf * 0.30 + p_et * 0.30 + p_hgbm * 0.40
+        oos_acc = float(((blended >= 0.50).astype(int) == y_te).mean())
+        # Precision at ≥70% threshold (the "high-confidence" regime)
+        bull_mask = blended >= 0.70
+        bear_mask = blended <= 0.30
+        hc_n      = int(bull_mask.sum() + bear_mask.sum())
+        if hc_n > 0:
+            correct = (int(y_te[bull_mask].sum()) +
+                       int((1 - y_te[bear_mask]).sum()))
+            hc_precision = float(correct / hc_n)
+        else:
+            hc_precision = 0.0
+    else:
+        oos_acc = hc_precision = 0.0
+        hc_n    = 0
+
+    fi = {}
+    for i, col in enumerate(aug_cols):
+        fi[col] = round(
+            float(rf.feature_importances_[i] * 0.5 +
+                  et.feature_importances_[i] * 0.5), 4
+        )
+
+    return {
+        "rf": rf, "et": et, "hgbm": hgbm,
+        "imputer":           imputer,
+        "scaler":            scaler,
+        "base_feature_cols": list(base_cols),
+        "feature_cols":      aug_cols,
+        "feature_importance": fi,
+        "n_samples":         int(len(y)),
+        "n_train":           int(split),
+        "oos_accuracy":      round(oos_acc,      3),
+        "hc_precision":      round(hc_precision, 3),
+        "hc_n":              hc_n,
+    }
+
+
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train_model(all_hists: dict[str, pd.DataFrame]) -> tuple[bool, dict]:
     """
-    Train a 3-model ensemble on pooled historical data.
-    Returns (success, feature_importance_dict).
+    Train multi-timeframe ensemble (3d, 5d, 10d forward returns).
+    Saves to ADV_MODEL_PATH + backward-compat MODEL_PATH / SCALER_PATH.
+    Returns (success, feature_importance_3d).
     """
     try:
         import joblib
         import warnings as _w
-        # Suppress noisy sklearn/joblib parallel configuration warnings
         _w.filterwarnings("ignore", category=UserWarning, module="sklearn")
-        from sklearn.ensemble import (
-            RandomForestClassifier,
-            ExtraTreesClassifier,
-            HistGradientBoostingClassifier,
-        )
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.impute import SimpleImputer
 
-        frames = []
+        frames_3d:  list[pd.DataFrame] = []
+        frames_5d:  list[pd.DataFrame] = []
+        frames_10d: list[pd.DataFrame] = []
+
         for symbol, hist in all_hists.items():
             if len(hist) < 80:
                 continue
-            enriched = ind.enrich(hist.copy())
-            enriched = enriched.dropna(subset=["target"])
+            enriched  = ind.enrich(hist.copy())
             available = [c for c in FEATURE_COLS if c in enriched.columns]
-            frames.append(enriched[available + ["target"]])
+            if not available:
+                continue
 
-        if not frames:
+            df3 = enriched.dropna(subset=["target"])
+            if len(df3) >= 30:
+                frames_3d.append(df3[available + ["target"]])
+
+            if "target_5d" in enriched.columns:
+                df5 = enriched.dropna(subset=["target_5d"])
+                if len(df5) >= 30:
+                    frames_5d.append(df5[available + ["target_5d"]])
+
+            if "target_10d" in enriched.columns:
+                df10 = enriched.dropna(subset=["target_10d"])
+                if len(df10) >= 30:
+                    frames_10d.append(df10[available + ["target_10d"]])
+
+        if not frames_3d:
             return False, {}
 
-        combined = pd.concat(frames, ignore_index=True)
-        available_cols = [c for c in FEATURE_COLS if c in combined.columns]
+        def _build(frames, target_col):
+            combined = pd.concat(frames, ignore_index=True)
+            cols = [c for c in FEATURE_COLS if c in combined.columns]
+            return combined[cols].values.astype(float), combined[target_col].values, cols
 
-        X_raw = combined[available_cols].values.astype(float)
-        y     = combined["target"].values
+        print("[predictor] training 3d model...", flush=True)
+        X3, y3, cols3 = _build(frames_3d, "target")
+        b3d = _train_bundle(X3, y3, cols3)
+        print(f"[predictor] 3d  OOS={b3d['oos_accuracy']:.1%}  "
+              f"HC-precision={b3d['hc_precision']:.1%} (n={b3d['hc_n']})", flush=True)
 
-        # Impute NaN (early rows without enough history)
-        imputer = SimpleImputer(strategy="median")
-        X_imp   = imputer.fit_transform(X_raw)
+        b5d = b10d = None
+        if frames_5d:
+            print("[predictor] training 5d model...", flush=True)
+            X5, y5, cols5 = _build(frames_5d, "target_5d")
+            b5d = _train_bundle(X5, y5, cols5)
+            print(f"[predictor] 5d  OOS={b5d['oos_accuracy']:.1%}  "
+                  f"HC-precision={b5d['hc_precision']:.1%} (n={b5d['hc_n']})", flush=True)
 
-        # Scale for RF/ET (HistGBM doesn't need it but it won't hurt)
-        scaler   = StandardScaler()
-        X_scaled = scaler.fit_transform(X_imp)
+        if frames_10d:
+            print("[predictor] training 10d model...", flush=True)
+            X10, y10, cols10 = _build(frames_10d, "target_10d")
+            b10d = _train_bundle(X10, y10, cols10)
+            print(f"[predictor] 10d OOS={b10d['oos_accuracy']:.1%}  "
+                  f"HC-precision={b10d['hc_precision']:.1%} (n={b10d['hc_n']})", flush=True)
 
-        # -- Model 1: Random Forest -------------------------------------------
-        rf = RandomForestClassifier(
-            n_estimators=300, max_depth=8, min_samples_leaf=8,
-            max_features="sqrt", random_state=42, n_jobs=-1,
-        )
-        rf.fit(X_scaled, y)
-
-        # -- Model 2: Extra Trees (lower variance, high diversity) -------------
-        et = ExtraTreesClassifier(
-            n_estimators=300, max_depth=8, min_samples_leaf=8,
-            max_features="sqrt", random_state=43, n_jobs=-1,
-        )
-        et.fit(X_scaled, y)
-
-        # -- Model 3: Gradient Boosting (sequential, often best on tabular) ---
-        hgbm = HistGradientBoostingClassifier(
-            max_iter=300, max_depth=6, min_samples_leaf=10,
-            learning_rate=0.04, l2_regularization=0.1, random_state=44,
-        )
-        hgbm.fit(X_scaled, y)
-
-        # Feature importance: average of RF and ET (GBM importance is different scale)
-        fi = {}
-        for i, col in enumerate(available_cols):
-            fi[col] = round(float(rf.feature_importances_[i] * 0.5 +
-                                  et.feature_importances_[i] * 0.5), 4)
-
-        bundle = {
-            "rf":                 rf,
-            "et":                 et,
-            "hgbm":               hgbm,
-            "imputer":            imputer,
-            "feature_cols":       available_cols,
-            "feature_importance": fi,
-            "n_samples":          len(y),
-            "n_stocks":           len(frames),
+        ADV_MODEL_PATH.parent.mkdir(exist_ok=True)
+        adv = {
+            "3d":        b3d,
+            "5d":        b5d,
+            "10d":       b10d,
+            "trained_at": datetime.now().isoformat(),
+            "n_stocks":  len(frames_3d),
         }
-        MODEL_PATH.parent.mkdir(exist_ok=True)
-        joblib.dump(bundle, MODEL_PATH)
-        joblib.dump(scaler, SCALER_PATH)
-        return True, fi
+        joblib.dump(adv, ADV_MODEL_PATH)
+        print(f"[predictor] advanced model saved — {len(frames_3d)} stocks", flush=True)
+
+        # Backward-compat: also write to MODEL_PATH / SCALER_PATH
+        legacy = {
+            "rf":                b3d["rf"],
+            "et":                b3d["et"],
+            "hgbm":              b3d["hgbm"],
+            "imputer":           b3d["imputer"],
+            "feature_cols":      b3d["feature_cols"],
+            "feature_importance": b3d["feature_importance"],
+            "n_samples":         b3d["n_samples"],
+            "n_stocks":          len(frames_3d),
+        }
+        joblib.dump(legacy,         MODEL_PATH)
+        joblib.dump(b3d["scaler"],  SCALER_PATH)
+
+        return True, b3d["feature_importance"]
 
     except Exception as e:
         print(f"Training failed: {e}")
@@ -183,47 +347,141 @@ def train_model(all_hists: dict[str, pd.DataFrame]) -> tuple[bool, dict]:
 
 # ── Inference ─────────────────────────────────────────────────────────────────
 
-def _ml_predict(features: dict) -> Optional[float]:
-    """Run the 3-model ensemble and return blended probability (0-1)."""
-    bundle, scaler = _load_model()
+def _predict_from_bundle(bundle: Optional[dict], features: dict) -> Optional[float]:
+    """
+    Predict from a self-contained bundle dict (with embedded imputer + scaler).
+    Returns blended probability (0-1) or None on error.
+    """
     if bundle is None:
         return None
     try:
-        feature_cols = bundle.get("feature_cols", FEATURE_COLS)
-        vals = [features.get(col, np.nan) for col in feature_cols]
-        X = np.array(vals, dtype=float).reshape(1, -1)
-
-        # Impute
+        base_cols = bundle.get("base_feature_cols") or [
+            c for c in bundle.get("feature_cols", FEATURE_COLS)
+            if c not in _INTERACTION_NAMES
+        ]
+        vals    = [features.get(col, np.nan) for col in base_cols]
+        X       = np.array(vals, dtype=float).reshape(1, -1)
         imputer = bundle.get("imputer")
-        if imputer is not None:
-            X = imputer.transform(X)
-        else:
-            X = np.nan_to_num(X, nan=0.0)
-
-        X_scaled = scaler.transform(X)
-
-        rf   = bundle["rf"]
-        et   = bundle.get("et")
-        hgbm = bundle.get("hgbm")
-
-        prob_rf   = rf.predict_proba(X_scaled)[0][1]
-        prob_et   = et.predict_proba(X_scaled)[0][1]   if et   else prob_rf
-        prob_hgbm = hgbm.predict_proba(X_scaled)[0][1] if hgbm else prob_rf
-
-        # Blend: GBM slightly higher weight (generally best on tabular data)
-        blended = prob_rf * 0.30 + prob_et * 0.30 + prob_hgbm * 0.40
-        return round(float(blended), 3)
+        X_imp   = imputer.transform(X) if imputer else np.nan_to_num(X, nan=0.0)
+        X_aug, _ = _add_interaction_features(X_imp, base_cols)
+        scaler  = bundle.get("scaler")
+        X_s     = scaler.transform(X_aug) if scaler else X_aug
+        rf      = bundle["rf"]
+        et      = bundle.get("et")
+        hgbm    = bundle.get("hgbm")
+        p_rf    = rf.predict_proba(X_s)[0][1]
+        p_et    = et.predict_proba(X_s)[0][1]   if et   else p_rf
+        p_hgbm  = hgbm.predict_proba(X_s)[0][1] if hgbm else p_rf
+        return round(float(p_rf * 0.30 + p_et * 0.30 + p_hgbm * 0.40), 3)
     except Exception:
         return None
 
 
+def _ml_predict_multi(features: dict) -> Optional[dict]:
+    """
+    Run multi-timeframe inference (3d / 5d / 10d).
+    Returns a dict with per-timeframe probs, consensus, and high_confidence flag.
+    Falls back to legacy single-model when advanced model not yet trained.
+    High-confidence requires all 3 timeframes present AND all ≥70% (bull) / ≤30% (bear).
+    """
+    adv = _load_advanced_model()
+
+    if adv is None:
+        # Legacy fallback: use old MODEL_PATH + SCALER_PATH bundle
+        bundle, scaler = _load_model()
+        if bundle is None:
+            return None
+        try:
+            fc   = bundle.get("feature_cols", FEATURE_COLS)
+            base = [c for c in fc if c not in _INTERACTION_NAMES]
+            vals = [features.get(c, np.nan) for c in base]
+            X    = np.array(vals, dtype=float).reshape(1, -1)
+            imp  = bundle.get("imputer")
+            X_imp = imp.transform(X) if imp else np.nan_to_num(X, nan=0.0)
+            X_aug, _ = _add_interaction_features(X_imp, base)
+            X_s  = scaler.transform(X_aug)
+            rf   = bundle["rf"]; et = bundle.get("et"); hgbm = bundle.get("hgbm")
+            p    = (rf.predict_proba(X_s)[0][1] * 0.30 +
+                    (et.predict_proba(X_s)[0][1]   if et   else rf.predict_proba(X_s)[0][1]) * 0.30 +
+                    (hgbm.predict_proba(X_s)[0][1] if hgbm else rf.predict_proba(X_s)[0][1]) * 0.40)
+            p = round(float(p), 3)
+        except Exception:
+            return None
+        return {"prob_3d": p, "prob_5d": None, "prob_10d": None,
+                "consensus_prob": p,
+                "consensus_direction": "BULL" if p > 0.50 else "BEAR",
+                "high_confidence": False, "multi_timeframe": False}
+
+    prob_3d  = _predict_from_bundle(adv.get("3d"),  features)
+    prob_5d  = _predict_from_bundle(adv.get("5d"),  features)
+    prob_10d = _predict_from_bundle(adv.get("10d"), features)
+
+    probs = [p for p in [prob_3d, prob_5d, prob_10d] if p is not None]
+    if not probs:
+        return None
+
+    consensus_prob      = round(sum(probs) / len(probs), 3)
+    dirs                = ["BULL" if p > 0.50 else "BEAR" for p in probs]
+    consensus_direction = dirs[0] if len(set(dirs)) == 1 else "SPLIT"
+
+    all_present = all(p is not None for p in [prob_3d, prob_5d, prob_10d])
+    if all_present and consensus_direction == "BULL":
+        high_confidence = min(probs) >= 0.70
+    elif all_present and consensus_direction == "BEAR":
+        high_confidence = max(probs) <= 0.30
+    else:
+        high_confidence = False
+
+    return {
+        "prob_3d":             prob_3d,
+        "prob_5d":             prob_5d,
+        "prob_10d":            prob_10d,
+        "consensus_prob":      consensus_prob,
+        "consensus_direction": consensus_direction,
+        "high_confidence":     high_confidence,
+        "multi_timeframe":     len(probs) == 3,
+    }
+
+
+def _ml_predict(features: dict) -> Optional[float]:
+    """Backward-compatible: return blended consensus probability (0-1)."""
+    result = _ml_predict_multi(features)
+    return result["consensus_prob"] if result else None
+
+
 def get_model_feature_importance() -> dict:
     """Return sorted feature importance from the trained model."""
-    bundle, _ = _load_model()
-    if bundle is None:
-        return {}
-    fi = bundle.get("feature_importance", {})
+    adv = _load_advanced_model()
+    if adv and adv.get("3d"):
+        fi = adv["3d"].get("feature_importance", {})
+    else:
+        bundle, _ = _load_model()
+        if bundle is None:
+            return {}
+        fi = bundle.get("feature_importance", {})
     return dict(sorted(fi.items(), key=lambda x: x[1], reverse=True))
+
+
+def get_symbol_historical_accuracy(symbol: str, min_scored: int = 5) -> Optional[float]:
+    """
+    Look up the historical prediction accuracy for this symbol from the DB.
+    Returns None if fewer than min_scored predictions have been scored yet.
+    Uses the 30 most recent scored predictions to stay current.
+    """
+    try:
+        from .database import get_connection
+        with get_connection() as conn:
+            rows = conn.execute("""
+                SELECT was_correct FROM predictions_log
+                WHERE symbol=? AND was_correct IS NOT NULL
+                ORDER BY prediction_date DESC
+                LIMIT 30
+            """, (symbol,)).fetchall()
+        if len(rows) < min_scored:
+            return None
+        return round(sum(r["was_correct"] for r in rows) / len(rows), 3)
+    except Exception:
+        return None
 
 
 def _load_uptrend_model():
@@ -265,15 +523,36 @@ def get_uptrend_probability(ind_data: dict) -> Optional[float]:
 
 
 def get_model_metadata() -> dict:
-    """Return training metadata (n_samples, n_stocks, feature_cols)."""
+    """Return training metadata including multi-timeframe OOS accuracy."""
+    adv = _load_advanced_model()
+    if adv and adv.get("3d"):
+        b3  = adv["3d"]
+        b5  = adv.get("5d") or {}
+        b10 = adv.get("10d") or {}
+        return {
+            "n_samples":         b3.get("n_samples", "?"),
+            "n_stocks":          adv.get("n_stocks",  "?"),
+            "feature_cols":      b3.get("feature_cols", []),
+            "n_features":        len(b3.get("feature_cols", [])),
+            "oos_accuracy_3d":   b3.get("oos_accuracy"),
+            "hc_precision_3d":   b3.get("hc_precision"),
+            "hc_n_3d":           b3.get("hc_n"),
+            "oos_accuracy_5d":   b5.get("oos_accuracy"),
+            "hc_precision_5d":   b5.get("hc_precision"),
+            "oos_accuracy_10d":  b10.get("oos_accuracy"),
+            "hc_precision_10d":  b10.get("hc_precision"),
+            "trained_at":        adv.get("trained_at"),
+            "multi_timeframe":   True,
+        }
     bundle, _ = _load_model()
     if bundle is None:
         return {}
     return {
-        "n_samples":    bundle.get("n_samples", "?"),
-        "n_stocks":     bundle.get("n_stocks", "?"),
-        "feature_cols": bundle.get("feature_cols", []),
-        "n_features":   len(bundle.get("feature_cols", [])),
+        "n_samples":       bundle.get("n_samples", "?"),
+        "n_stocks":        bundle.get("n_stocks",  "?"),
+        "feature_cols":    bundle.get("feature_cols", []),
+        "n_features":      len(bundle.get("feature_cols", [])),
+        "multi_timeframe": False,
     }
 
 
@@ -547,39 +826,40 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
                          days_to_earnings: Optional[int],
                          market_regime: float = 0.0) -> dict:
     """
-    Generate a final BULLISH / NEUTRAL / BEARISH prediction with confidence.
-    Blends rule-based signals (35%) with ML ensemble probability (65%).
+    Generate BULLISH / NEUTRAL / BEARISH prediction with confidence.
+    Blends rule-based signals (35%) with multi-timeframe ML ensemble (65%).
 
-    market_regime: +1.0 = broad market bull (SPY above MA20),
-                   -1.0 = broad market bear (SPY below MA20), 0 = neutral/unknown.
+    market_regime: +1.0 = broad bull (SPY above MA20),
+                   -1.0 = broad bear (SPY below MA20), 0 = neutral/unknown.
+
+    high_confidence=True when all 3 timeframe models agree at ≥70% probability
+    AND the symbol's historical accuracy (if ≥5 scored predictions) is ≥50%.
     """
     signals = _rule_signals(ind_data, stock_snap, days_to_earnings)
 
     if signals:
         total_weight   = sum(s["weight"] for s in signals)
         weighted_score = sum(s["direction"] * s["weight"] for s in signals) / total_weight
-        # Confluence: how much do signals agree? (0=split, 1=all agree)
-        bull_w = sum(s["weight"] for s in signals if s["direction"] > 0)
-        bear_w = sum(s["weight"] for s in signals if s["direction"] < 0)
+        bull_w     = sum(s["weight"] for s in signals if s["direction"] > 0)
+        bear_w     = sum(s["weight"] for s in signals if s["direction"] < 0)
         confluence = abs(bull_w - bear_w) / total_weight
     else:
         weighted_score = 0.0
         confluence     = 0.0
         total_weight   = 0
 
-    ml_prob = _ml_predict(ind_data)
+    multi   = _ml_predict_multi(ind_data)
+    ml_prob = multi["consensus_prob"] if multi else None
 
     if ml_prob is not None:
-        rule_prob     = (weighted_score + 1) / 2   # -1..1 -> 0..1
+        rule_prob     = (weighted_score + 1) / 2
         combined_prob = rule_prob * 0.35 + ml_prob * 0.65
     else:
         combined_prob = (weighted_score + 1) / 2
 
-    # Market regime nudge: bull market lifts all boats, bear market discounts bulls
-    # Capped at ±5% so regime alone never flips a signal
+    # Market regime nudge (capped ±5% so regime alone never flips a signal)
     if market_regime != 0.0:
-        regime_nudge  = market_regime * 0.05
-        combined_prob = float(np.clip(combined_prob + regime_nudge, 0.0, 1.0))
+        combined_prob = float(np.clip(combined_prob + market_regime * 0.05, 0.0, 1.0))
 
     if combined_prob >= 0.60:
         signal = "BULLISH"
@@ -588,24 +868,43 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
     else:
         signal = "NEUTRAL"
 
-    # Confidence: distance from 0.5 scaled to 0-1
     confidence = min(abs(combined_prob - 0.5) * 2, 1.0)
 
-    # Confluence penalty: when indicators strongly disagree, cap confidence
-    # so split-signal predictions don't fire high-priority alerts
+    # Confluence penalty: split indicators → cap confidence
     if confluence < 0.3 and total_weight > 0:
         confidence *= 0.7
 
+    # Per-symbol historical accuracy: boost or penalise confidence
+    sym_acc = get_symbol_historical_accuracy(symbol)
+    if sym_acc is not None:
+        if sym_acc > 0.60:
+            confidence = min(confidence * (1.0 + (sym_acc - 0.60) * 0.5), 1.0)
+        elif sym_acc < 0.45:
+            confidence *= 0.80
+
+    # High-confidence: all 3 timeframes agree at ≥70% AND symbol not historically poor
+    high_confidence = bool(
+        multi is not None and
+        multi.get("high_confidence", False) and
+        (sym_acc is None or sym_acc >= 0.50)
+    )
+
     return {
-        "symbol":        symbol,
-        "signal":        signal,
-        "confidence":    round(confidence, 2),
-        "confluence":    round(confluence, 2),
-        "combined_prob": round(combined_prob, 3),
-        "rule_signals":  signals,
-        "ml_probability":ml_prob,
-        "ml_available":  ml_prob is not None,
-        "n_signals":     len(signals),
-        "total_weight":  total_weight,
-        "market_regime": market_regime,
+        "symbol":           symbol,
+        "signal":           signal,
+        "confidence":       round(confidence, 2),
+        "confluence":       round(confluence, 2),
+        "combined_prob":    round(combined_prob, 3),
+        "rule_signals":     signals,
+        "ml_probability":   ml_prob,
+        "ml_available":     ml_prob is not None,
+        "n_signals":        len(signals),
+        "total_weight":     total_weight,
+        "market_regime":    market_regime,
+        "high_confidence":  high_confidence,
+        "multi_timeframe":  multi is not None and multi.get("multi_timeframe", False),
+        "prob_3d":          multi["prob_3d"]   if multi else None,
+        "prob_5d":          multi["prob_5d"]   if multi else None,
+        "prob_10d":         multi["prob_10d"]  if multi else None,
+        "symbol_accuracy":  sym_acc,
     }

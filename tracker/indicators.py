@@ -405,8 +405,10 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df["gap_pct"] = ((open_p - close.shift(1)) /
                      close.shift(1).replace(0, np.nan) * 100)
 
-    # -- Training target: 3-day forward return (better signal/noise than 1d) --
-    df["target"] = (close.shift(-3) > close).astype(int)
+    # -- Training targets: multi-timeframe forward returns --
+    df["target"]    = (close.shift(-3)  > close).astype(int)
+    df["target_5d"] = (close.shift(-5)  > close).astype(int)
+    df["target_10d"]= (close.shift(-10) > close).astype(int)
 
     # -- Sanitise: replace +/-inf with NaN so sklearn is happy -----------------
     numeric_cols = df.select_dtypes(include=[np.number]).columns

@@ -1139,13 +1139,24 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         # ── Multi-factor combined signal ──────────────────────────────────────────
         # Fires when RSI + volume trend + MA alignment + MACD all point the same way
         combo = _combined_signal_score(s, pred, vol_ratio, chg)
-        if (combo["direction"] != "NEUTRAL" and combo["score"] >= 55
+        is_high_conf = bool(pred.get("high_confidence"))
+        # High-confidence (all 3 timeframe models agree at ≥70%) → lower threshold
+        combo_threshold = 45 if is_high_conf else 55
+        if (combo["direction"] != "NEUTRAL" and combo["score"] >= combo_threshold
                 and movement_confirmed
                 and not db.was_alert_sent_today("COMBINED_SIGNAL", sym)):
             sig_str = " · ".join(combo["signals"]) if combo["signals"] else ""
-            msg = (f"{sym} multi-factor {combo['direction']} "
-                   f"(score {combo['score']}/100) | {sig_str}")
-            severity = "HIGH" if combo["score"] >= 75 else "MEDIUM"
+            hc_tag  = " ⚡ HIGH-CONF" if is_high_conf else ""
+            mt_str  = ""
+            if pred.get("multi_timeframe"):
+                p3  = pred.get("prob_3d")
+                p5  = pred.get("prob_5d")
+                p10 = pred.get("prob_10d")
+                if all(p is not None for p in [p3, p5, p10]):
+                    mt_str = f" [3d:{p3:.0%} 5d:{p5:.0%} 10d:{p10:.0%}]"
+            msg = (f"{sym} multi-factor {combo['direction']}{hc_tag} "
+                   f"(score {combo['score']}/100){mt_str} | {sig_str}")
+            severity = "HIGH" if (combo["score"] >= 75 or is_high_conf) else "MEDIUM"
             db.log_alert("COMBINED_SIGNAL", sym, msg, severity)
             new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
 
