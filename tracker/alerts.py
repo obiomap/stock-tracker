@@ -788,6 +788,171 @@ def send_options_alert(new_recs: list[dict], config: dict) -> int:
     return counts["email_sent"] + counts["sms_sent"]
 
 
+def _combined_signal_score(s: dict, pred: dict, vol_ratio: float, chg: float) -> dict:
+    """
+    Multi-factor directional score (0-100) combining RSI, volume + price movement,
+    increasing volume (OBV trend), moving averages, and MACD.
+    Returns dict with score, direction (BULL/BEAR/NEUTRAL), bull/bear points, key signals.
+    """
+    bull = 0
+    bear = 0
+    signals: list[str] = []
+
+    rsi       = s.get("rsi") or 50
+    price     = s.get("price") or 0
+    ma50      = s.get("ma50") or 0
+    ma200     = s.get("ma200") or 0
+    macd      = s.get("macd") or 0
+    macd_s    = s.get("macd_signal") or 0
+    macd_hist = s.get("macd_hist") or 0
+    obv_roc   = s.get("obv_roc_5d") or 0  # OBV rate-of-change = multi-day volume trend
+    uptrend   = s.get("uptrend_prob") or 0.5
+    sig       = pred.get("signal", "NEUTRAL")
+    conf      = pred.get("confidence", 0)
+
+    # ── RSI ──────────────────────────────────────────────────────────────────────
+    if rsi <= 25:   bull += 18; signals.append(f"RSI {rsi:.0f} extreme oversold")
+    elif rsi <= 35: bull += 12; signals.append(f"RSI {rsi:.0f} oversold")
+    elif rsi >= 75: bear += 18; signals.append(f"RSI {rsi:.0f} extreme overbought")
+    elif rsi >= 65: bear += 10; signals.append(f"RSI {rsi:.0f} overbought")
+
+    # ── Volume + price direction (price movement with increasing volume) ─────────
+    if vol_ratio >= 2.0:
+        if chg > 0.5:   bull += 22; signals.append(f"{vol_ratio:.1f}× vol + price up")
+        elif chg < -0.5: bear += 22; signals.append(f"{vol_ratio:.1f}× vol + price down")
+        else:            bull += 8
+    elif vol_ratio >= 1.5:
+        if chg > 0: bull += 12
+        elif chg < 0: bear += 12
+
+    # ── OBV trend: multi-day volume accumulation/distribution ───────────────────
+    if obv_roc >= 3:    bull += 15; signals.append("OBV accumulation")
+    elif obv_roc >= 1:  bull += 8
+    elif obv_roc <= -3: bear += 15; signals.append("OBV distribution")
+    elif obv_roc <= -1: bear += 8
+
+    # ── Moving averages ──────────────────────────────────────────────────────────
+    if price and ma50:
+        if price > ma50 * 1.01: bull += 10
+        elif price < ma50 * 0.99: bear += 10
+
+    if price and ma200:
+        if price > ma200:
+            bull += 15; signals.append("above MA200")
+        else:
+            bear += 15; signals.append("below MA200")
+
+    if ma50 and ma200:
+        if ma50 > ma200:
+            bull += 15; signals.append("golden cross")
+        else:
+            bear += 15; signals.append("death cross")
+
+    # ── MACD ─────────────────────────────────────────────────────────────────────
+    if macd > macd_s:   bull += 10; signals.append("MACD↑")
+    elif macd < macd_s: bear += 10
+
+    if macd_hist >  0.05: bull += 8
+    elif macd_hist < -0.05: bear += 8
+
+    # ── ML prediction ────────────────────────────────────────────────────────────
+    if sig == "BULLISH" and conf >= 0.55:
+        bull += int(conf * 18)
+    elif sig == "BEARISH" and conf >= 0.55:
+        bear += int(conf * 18)
+
+    # ── Uptrend probability ───────────────────────────────────────────────────────
+    if uptrend >= 0.65: bull += 8
+    elif uptrend <= 0.35: bear += 8
+
+    net = bull - bear
+    direction = "BULL" if net >= 20 else "BEAR" if net <= -20 else "NEUTRAL"
+    return {
+        "score":     min(max(bull, bear), 100),
+        "direction": direction,
+        "bull":      bull,
+        "bear":      bear,
+        "net":       net,
+        "signals":   signals[:4],
+    }
+
+
+def _longterm_score(s: dict, pred: dict, vol_ratio: float) -> tuple[int, str]:
+    """
+    Score a stock's long-term investing attractiveness (0-100).
+    Requires price above MA200 as base condition. High scores indicate
+    strong long-term setups: uptrend confirmed, golden cross, healthy RSI entry,
+    MACD momentum, volume accumulation, and near MA50 support.
+    Returns (score, context_str). Returns (0, '') if below MA200.
+    """
+    price    = s.get("price") or 0
+    ma50     = s.get("ma50") or 0
+    ma200    = s.get("ma200") or 0
+    rsi      = s.get("rsi") or 50
+    macd     = s.get("macd") or 0
+    macd_s   = s.get("macd_signal") or 0
+    obv_roc  = s.get("obv_roc_5d") or 0
+    adx      = s.get("adx") or 0
+    h52_pct  = s.get("pct_from_52w_high") or 0
+    uptrend  = s.get("uptrend_prob") or 0.5
+    sig      = pred.get("signal", "NEUTRAL")
+    conf     = pred.get("confidence", 0)
+
+    # Prerequisite: long-term uptrend (price above or within 3% of MA200)
+    if not (price and ma200 and price >= ma200 * 0.97):
+        return 0, ""
+
+    score = 0
+    parts: list[str] = []
+
+    # Base: above MA200 = long-term uptrend
+    pct_above = (price - ma200) / ma200 * 100 if ma200 else 0
+    score += 25
+    parts.append(f"↑MA200 +{pct_above:.1f}%")
+
+    # Golden cross (MA50 > MA200) = strongest long-term structural signal
+    if ma50 and ma200:
+        if ma50 > ma200:
+            score += 25; parts.append("golden cross")
+        else:
+            score += 5   # above MA200 but cross not yet confirmed
+
+    # RSI at healthy entry zone (not chasing overbought)
+    if 35 <= rsi <= 55:
+        score += 18; parts.append(f"RSI {rsi:.0f} ideal entry")
+    elif 55 < rsi <= 65:
+        score += 10; parts.append(f"RSI {rsi:.0f} healthy")
+    elif rsi < 35:
+        score += 12; parts.append(f"RSI {rsi:.0f} oversold dip")
+    # RSI > 65: no bonus — extended, wait for pullback
+
+    # MACD bullish: momentum confirming uptrend
+    if macd > macd_s:
+        score += 15; parts.append("MACD bullish")
+
+    # OBV accumulation: smart money buying over multiple days
+    if obv_roc >= 2:
+        score += 12; parts.append("vol accumulation")
+    elif obv_roc >= 0.5:
+        score += 6
+
+    # Price near MA50 support = ideal pullback entry point
+    if ma50 and price:
+        ratio = price / ma50
+        if 0.97 <= ratio <= 1.04:
+            score += 10; parts.append("at MA50 support")
+
+    # Trending (ADX > 20) adds confidence
+    if adx and adx > 25:
+        score += 5; parts.append(f"ADX {adx:.0f} trending")
+
+    # Not too extended from 52w high (still in momentum zone)
+    if h52_pct and h52_pct > -25:
+        score += 5
+
+    return min(score, 100), " · ".join(parts)
+
+
 def _tech_context(s: dict, pred: dict, vol_ratio: float) -> tuple[int, str]:
     """
     Score alert signal quality 0-100 and build a compact context string.
@@ -842,6 +1007,15 @@ def _tech_context(s: dict, pred: dict, vol_ratio: float) -> tuple[int, str]:
             score += 8
         else:
             parts.append("MACD↓")
+
+    # OBV trend (multi-day volume accumulation/distribution)
+    obv_roc = s.get("obv_roc_5d")
+    if obv_roc is not None:
+        if obv_roc >= 2:
+            parts.append("OBV accum")
+            score += 8
+        elif obv_roc <= -2:
+            parts.append("OBV distrib")
 
     # Rule-signal confluence from predictor
     rule_sigs = pred.get("rule_signals", [])
@@ -961,6 +1135,28 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                    f"— conviction | {ctx}")
             db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
+
+        # ── Multi-factor combined signal ──────────────────────────────────────────
+        # Fires when RSI + volume trend + MA alignment + MACD all point the same way
+        combo = _combined_signal_score(s, pred, vol_ratio, chg)
+        if (combo["direction"] != "NEUTRAL" and combo["score"] >= 55
+                and movement_confirmed
+                and not db.was_alert_sent_today("COMBINED_SIGNAL", sym)):
+            sig_str = " · ".join(combo["signals"]) if combo["signals"] else ""
+            msg = (f"{sym} multi-factor {combo['direction']} "
+                   f"(score {combo['score']}/100) | {sig_str}")
+            severity = "HIGH" if combo["score"] >= 75 else "MEDIUM"
+            db.log_alert("COMBINED_SIGNAL", sym, msg, severity)
+            new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
+
+        # ── Long-term investing opportunity ───────────────────────────────────────
+        # Weekly dedup: only re-alert on same stock once per 7 days
+        if not is_crypto and not db.was_alert_sent_recently("LONGTERM_BUY", sym, days=7):
+            lt_score, lt_ctx = _longterm_score(s, pred, vol_ratio)
+            if lt_score >= 75:
+                msg = f"{sym} long-term setup {lt_score}/100 | {lt_ctx}"
+                db.log_alert("LONGTERM_BUY", sym, msg, "MEDIUM")
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
 
     for e in earnings:
         sym  = e["symbol"]

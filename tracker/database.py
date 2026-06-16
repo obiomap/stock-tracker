@@ -297,6 +297,17 @@ def was_alert_sent_today(alert_type: str, symbol: str) -> bool:
     return row is not None
 
 
+def was_alert_sent_recently(alert_type: str, symbol: str, days: int = 7) -> bool:
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM alerts_log WHERE alert_type=? AND symbol=? AND created_at>=?",
+            (alert_type, symbol, cutoff)
+        ).fetchone()
+    return row is not None
+
+
 # ── subscribers ───────────────────────────────────────────────────────────────
 
 def add_subscriber(email: str, stocks: list[str], phone_number: str = "", carrier: str = "") -> str:

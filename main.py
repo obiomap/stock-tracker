@@ -139,6 +139,12 @@ def refresh_all(config: dict) -> None:
                     "fib_signal": int(_fib.get("signal", 0)),
                     "fib_level":  _fib.get("signal_level", ""),
                     "uptrend_prob": uptrend_prob,
+                    # Extra indicator fields passed in-memory to alerts (not stored in DB)
+                    "macd_hist":         ind_data.get("macd_hist"),
+                    "obv_roc_5d":        ind_data.get("obv_roc_5d"),
+                    "adx":               ind_data.get("adx"),
+                    "pct_from_52w_high": ind_data.get("pct_from_52w_high"),
+                    "pct_from_52w_low":  ind_data.get("pct_from_52w_low"),
                 }
                 db.upsert_stock(stock_row)
                 stocks_out.append(stock_row)
