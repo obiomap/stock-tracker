@@ -861,7 +861,11 @@ def serve(host, port, http_port, no_tls):
 
     # ── background data refresh (runs on Railway and all serve modes) ─────────
     def _bg_refresh_loop():
-        refresh_all(config)
+        try:
+            refresh_all(config)
+        except Exception as _e:
+            print(f"[refresh] STARTUP ERROR: {_e}", flush=True)
+            import traceback; traceback.print_exc()
         interval = config.get("refresh_interval", 300)
         while True:
             time.sleep(interval)
