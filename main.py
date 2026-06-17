@@ -42,6 +42,9 @@ _state: dict = {
     "market_open": False,
 }
 
+_last_trained: float = 0.0  # epoch timestamp of last model training run
+_RETRAIN_DAYS: int   = 7    # retrain advanced model weekly
+
 
 # ── market hours ──────────────────────────────────────────────────────────────
 def _is_market_open() -> bool:
@@ -82,7 +85,8 @@ def refresh_all(config: dict) -> None:
 
         stocks_out = []
         predictions_out = {}
-        hist_data = {}
+        hist_data  = {}
+        all_hists  = {}   # collected for ML training
         earnings_map = {e["symbol"]: e["days_until"] for e in _state["earnings"]}
 
         # Compute market regime once per refresh using SPY snapshot
@@ -110,6 +114,8 @@ def refresh_all(config: dict) -> None:
                     continue
                 hist_data[sym] = snap
                 hist_data[sym]["hist"] = hist
+                if len(hist) >= 80:
+                    all_hists[sym] = hist
 
                 ind_data = ind.get_latest_indicators(hist)
                 days_to_earn = earnings_map.get(sym)
@@ -192,6 +198,22 @@ def refresh_all(config: dict) -> None:
             _refresh_sweeps(stocks_out, config)
         except Exception:
             pass
+
+        # ── Auto-train advanced ML model (background thread) ─────────────────
+        # Trains on first startup if advanced_model.pkl is missing, then weekly.
+        global _last_trained
+        _adv_missing = not pred_mod.ADV_MODEL_PATH.exists()
+        _stale       = time.time() - _last_trained > _RETRAIN_DAYS * 86400
+        if (_adv_missing or _stale) and len(all_hists) >= 50:
+            _last_trained = time.time()
+            _hists_snap   = dict(all_hists)
+            print(f"[refresh] spawning ML training — {len(_hists_snap)} stocks", flush=True)
+            def _do_train(h=_hists_snap):
+                try:
+                    pred_mod.train_model(h)
+                except Exception as _te:
+                    print(f"[train] error: {_te}", flush=True)
+            threading.Thread(target=_do_train, daemon=True).start()
     finally:
         _state["refreshing"] = False
 
