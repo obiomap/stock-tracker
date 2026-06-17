@@ -103,7 +103,9 @@ def refresh_all(config: dict) -> None:
 
         market_regime = _market_regime(snaps)
 
-        for sym in watchlist:
+        for _i, sym in enumerate(watchlist):
+            if _i > 0 and _i % 50 == 0:
+                print(f"[refresh] progress {_i}/{len(watchlist)} stocks processed", flush=True)
             try:
                 snap = snaps.get(sym)
                 if not snap:
