@@ -191,6 +191,20 @@ def _migrate_columns() -> None:
         except Exception:
             pass
 
+        # login_otps table
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS login_otps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    used INTEGER DEFAULT 0
+                )
+            """)
+        except Exception:
+            pass
+
         # predictions_log table -- create if missing (legacy DBs pre-v2)
         try:
             conn.execute("""
@@ -626,3 +640,44 @@ def get_kv(key: str) -> str | None:
     with get_connection() as conn:
         row = conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+
+# ── Auth / login OTPs ─────────────────────────────────────────────────────────
+
+def is_active_subscriber_email(email: str) -> bool:
+    """True if email belongs to an active subscriber (excludes SMS-only placeholders)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM subscribers WHERE email=? AND active=1 AND email NOT LIKE 'sms+%'",
+            (email.lower().strip(),)
+        ).fetchone()
+    return row is not None
+
+
+def create_login_otp(email: str) -> str:
+    """Generate a 6-digit OTP, store it (15 min TTL), return the code."""
+    import random as _r, time as _t
+    code = f"{_r.randint(0, 999999):06d}"
+    ts = _t.time()
+    with get_connection() as conn:
+        # Remove stale OTPs for this email and any globally expired ones
+        conn.execute("DELETE FROM login_otps WHERE email=? OR created_at<?",
+                     (email.lower().strip(), ts - 900))
+        conn.execute("INSERT INTO login_otps (email, code, created_at) VALUES (?,?,?)",
+                     (email.lower().strip(), code, ts))
+    return code
+
+
+def verify_login_otp(email: str, code: str) -> bool:
+    """Verify OTP — returns True once, marks it used."""
+    import time as _t
+    ts = _t.time()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM login_otps WHERE email=? AND code=? AND used=0 AND created_at>?",
+            (email.lower().strip(), code.strip(), ts - 900)
+        ).fetchone()
+        if row:
+            conn.execute("UPDATE login_otps SET used=1 WHERE id=?", (row["id"],))
+            return True
+    return False

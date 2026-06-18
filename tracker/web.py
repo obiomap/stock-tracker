@@ -3,7 +3,8 @@ Subscriber signup web server (HTTPS).
 Run via: python main.py serve
 """
 import json as _json
-from flask import Flask, request, redirect, Response
+import os as _os
+from flask import Flask, request, redirect, Response, session
 from . import database as db
 from . import config as cfg_mod
 from . import knowledge as kb_mod
@@ -986,8 +987,350 @@ def _learn_base(title: str, body: str) -> str:
 
 # ── application factory ───────────────────────────────────────────────────────
 
+_LOGIN_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log In &mdash; Stock Tracker</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     background:linear-gradient(135deg,#020617 0%,#0f172a 40%,#1e1b4b 70%,#2e1065 100%);
+     min-height:100vh;display:flex;flex-direction:column;align-items:center;
+     justify-content:center;color:#e2e8f0;padding:24px}
+.card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+      border-radius:20px;padding:44px 40px;width:100%;max-width:420px;text-align:center;
+      box-shadow:0 24px 64px rgba(0,0,0,.5)}
+.logo{font-size:44px;margin-bottom:10px}
+.title{font-size:26px;font-weight:800;color:#fff;margin-bottom:6px}
+.sub{font-size:14px;color:rgba(255,255,255,.45);margin-bottom:36px}
+.field{text-align:left;margin-bottom:16px}
+.field label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;
+             letter-spacing:.6px;color:rgba(255,255,255,.4);margin-bottom:6px}
+.field input{width:100%;padding:13px 14px;border-radius:10px;
+             background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);
+             color:#e2e8f0;font-size:16px;outline:none;transition:border-color .2s}
+.field input:focus{border-color:rgba(99,102,241,.6);background:rgba(255,255,255,.09)}
+.btn{width:100%;padding:14px;border-radius:10px;border:none;margin-top:6px;
+     background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+     font-size:16px;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s}
+.btn:hover{opacity:.92;transform:translateY(-1px)}
+.btn:disabled{opacity:.45;cursor:default;transform:none}
+.msg{margin-top:14px;font-size:13px;min-height:20px;text-align:center}
+.otp{font-size:32px;letter-spacing:14px;text-align:center;font-weight:800;
+     background:rgba(255,255,255,.05)}
+.hint{font-size:12px;color:rgba(255,255,255,.3);margin-top:7px;text-align:center}
+.sep{border:none;border-top:1px solid rgba(255,255,255,.07);margin:28px 0 22px}
+.foot{font-size:13px;color:rgba(255,255,255,.38)}
+.foot a{color:#818cf8}
+.back-link{margin-top:14px;font-size:12px;color:rgba(255,255,255,.3)}
+.back-link a{color:#818cf8}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">&#x1F4C8;</div>
+  <div class="title">Stock Tracker</div>
+  <div class="sub">Subscriber-only &mdash; log in with your email</div>
+
+  <div id="stepEmail">
+    <div class="field">
+      <label>Subscriber Email</label>
+      <input type="email" id="loginEmail" placeholder="you@example.com"
+             autocomplete="email">
+    </div>
+    <button class="btn" id="sendBtn" onclick="sendOtp()">Send Login Code</button>
+    <div class="msg" id="emailMsg"></div>
+  </div>
+
+  <div id="stepCode" style="display:none">
+    <div class="field">
+      <label>6-Digit Code</label>
+      <input type="text" id="loginCode" class="otp" placeholder="&mdash;&mdash;&mdash;&mdash;&mdash;&mdash;"
+             maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+      <div class="hint">Check your inbox &mdash; expires in 15&nbsp;min</div>
+    </div>
+    <button class="btn" id="verifyBtn" onclick="verifyOtp()">Log In &rarr;</button>
+    <div class="msg" id="codeMsg"></div>
+    <div class="back-link">
+      <a href="#" onclick="backToEmail();return false;">&#x2190; Use a different email</a>
+    </div>
+  </div>
+
+  <hr class="sep">
+  <div class="foot">
+    Not a subscriber yet? <a href="/#subscribe">Get Alerts &rarr;</a>
+  </div>
+</div>
+
+<script>
+var _email = '', _next = '__NEXT__';
+function sendOtp() {
+  var em = document.getElementById('loginEmail').value.trim();
+  if (!em || !em.includes('@')) { msg('emailMsg','Enter a valid email address.','#ef4444'); return; }
+  var btn = document.getElementById('sendBtn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  msg('emailMsg','','');
+  fetch('/login/request',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:em})})
+  .then(r=>r.json()).then(d=>{
+    btn.disabled=false; btn.textContent='Send Login Code';
+    if(d.ok){
+      _email=em;
+      document.getElementById('stepEmail').style.display='none';
+      document.getElementById('stepCode').style.display='block';
+      setTimeout(()=>document.getElementById('loginCode').focus(),50);
+    } else { msg('emailMsg',d.error||'Error — check your email address.','#ef4444'); }
+  }).catch(()=>{btn.disabled=false;btn.textContent='Send Login Code';
+                msg('emailMsg','Network error — try again.','#ef4444');});
+}
+function verifyOtp() {
+  var code = document.getElementById('loginCode').value.trim();
+  if(code.length!==6){msg('codeMsg','Enter the 6-digit code from your email.','#ef4444');return;}
+  var btn = document.getElementById('verifyBtn');
+  btn.disabled=true; btn.textContent='Verifying…';
+  fetch('/login/verify',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:_email,code:code,next:_next})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){ window.location.href=d.next||'/'; }
+    else { btn.disabled=false; btn.textContent='Log In →';
+           msg('codeMsg',d.error||'Invalid or expired code.','#ef4444'); }
+  }).catch(()=>{btn.disabled=false;btn.textContent='Log In →';
+                msg('codeMsg','Network error — try again.','#ef4444');});
+}
+function backToEmail(){
+  document.getElementById('stepCode').style.display='none';
+  document.getElementById('stepEmail').style.display='block';
+  msg('codeMsg','','');
+}
+function msg(id,text,color){var e=document.getElementById(id);if(e){e.textContent=text;e.style.color=color;}}
+document.addEventListener('keydown',function(e){
+  if(e.key==='Enter'){
+    if(document.getElementById('stepCode').style.display!=='none') verifyOtp();
+    else sendOtp();
+  }
+});
+</script>
+</body>
+</html>"""
+
+
+def _send_otp_email(to_email: str, code: str, config: dict) -> bool:
+    """Send 6-digit login code via Resend or SMTP. Returns True on success."""
+    subject = f"Your Stock Tracker login code: {code}"
+    html = f"""
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            max-width:480px;margin:0 auto;background:#0f172a;color:#e2e8f0;
+            border-radius:16px;padding:40px 36px;text-align:center">
+  <div style="font-size:36px;margin-bottom:12px">📈</div>
+  <h2 style="color:#fff;margin:0 0 8px;font-size:22px">Stock Tracker Login</h2>
+  <p style="color:rgba(255,255,255,.55);font-size:14px;margin:0 0 32px">
+    Your one-time login code:
+  </p>
+  <div style="font-size:44px;font-weight:800;letter-spacing:14px;color:#818cf8;
+              background:rgba(99,102,241,.12);border-radius:12px;padding:18px 24px;
+              margin-bottom:24px;display:inline-block">
+    {code}
+  </div>
+  <p style="color:rgba(255,255,255,.4);font-size:13px;margin:0">
+    Expires in 15 minutes. Don't share this code.
+  </p>
+  <p style="color:rgba(255,255,255,.25);font-size:12px;margin-top:24px">
+    If you didn't request this, ignore this email.
+  </p>
+</div>"""
+    try:
+        resend_key = _os.environ.get("RESEND_API_KEY") or config.get("resend_api_key", "")
+        if resend_key:
+            import resend as _resend
+            _resend.api_key = resend_key
+            from_addr = (_os.environ.get("RESEND_FROM") or config.get("resend_from", "")
+                         or config.get("email", {}).get("sender", "onboarding@resend.dev"))
+            _resend.Emails.send({"from": from_addr, "to": [to_email],
+                                 "subject": subject, "html": html})
+            return True
+        email_cfg = config.get("email", {})
+        if email_cfg.get("enabled") and email_cfg.get("sender") and email_cfg.get("password"):
+            import smtplib
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = email_cfg["sender"]
+            msg["To"]      = to_email
+            msg.attach(MIMEText(html, "html"))
+            with smtplib.SMTP(email_cfg["smtp_server"], email_cfg["smtp_port"]) as srv:
+                srv.ehlo(); srv.starttls()
+                srv.login(email_cfg["sender"], email_cfg["password"])
+                srv.sendmail(email_cfg["sender"], [to_email], msg.as_string())
+            return True
+    except Exception as _e:
+        print(f"[login] OTP email error: {_e}", flush=True)
+    return False
+
+
+def _public_landing() -> Response:
+    """Minimal landing page for unauthenticated visitors."""
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stock Tracker &mdash; AI-Powered Market Intelligence</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+     background:linear-gradient(135deg,#020617 0%,#0f172a 35%,#1e1b4b 65%,#2e1065 100%);
+     min-height:100vh;color:#e2e8f0}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:18px 40px;
+     background:rgba(2,6,23,.85);backdrop-filter:blur(12px);
+     border-bottom:1px solid rgba(255,255,255,.07);position:sticky;top:0;z-index:10}
+.nav-logo{color:#fff;font-weight:800;font-size:18px;display:flex;align-items:center;gap:8px}
+.nav-links{display:flex;gap:16px;align-items:center}
+.nav-links a{color:rgba(255,255,255,.65);font-size:14px;text-decoration:none;font-weight:500}
+.nav-links a:hover{color:#fff}
+.nav-login{background:rgba(99,102,241,.2);border:1px solid rgba(99,102,241,.4);
+           color:#a5b4fc !important;padding:8px 18px;border-radius:8px}
+.nav-login:hover{background:rgba(99,102,241,.35) !important}
+.hero{padding:100px 32px 80px;text-align:center;max-width:760px;margin:0 auto}
+.badge{display:inline-flex;align-items:center;gap:8px;background:rgba(99,102,241,.18);
+       border:1px solid rgba(99,102,241,.35);color:#a5b4fc;padding:6px 18px;
+       border-radius:50px;font-size:13px;font-weight:600;margin-bottom:28px}
+h1{font-size:clamp(34px,5vw,58px);font-weight:800;color:#fff;line-height:1.12;
+   margin-bottom:18px;letter-spacing:-.02em}
+h1 .acc{background:linear-gradient(90deg,#818cf8,#c084fc);
+        -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero-sub{font-size:18px;color:rgba(255,255,255,.6);max-width:560px;margin:0 auto 48px;line-height:1.7}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+          gap:20px;max-width:900px;margin:0 auto 80px;padding:0 32px}
+.feat{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+      border-radius:14px;padding:24px;text-align:left}
+.feat-icon{font-size:28px;margin-bottom:12px}
+.feat h3{color:#fff;font-size:15px;font-weight:700;margin-bottom:6px}
+.feat p{color:rgba(255,255,255,.45);font-size:13px;line-height:1.6}
+.subscribe-section{max-width:560px;margin:0 auto 80px;padding:0 32px;text-align:center}
+.subscribe-section h2{color:#fff;font-size:26px;font-weight:700;margin-bottom:8px}
+.subscribe-section p{color:rgba(255,255,255,.5);font-size:14px;margin-bottom:28px}
+.sub-form{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+          border-radius:16px;padding:32px}
+.sub-field{text-align:left;margin-bottom:16px}
+.sub-field label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;
+                  letter-spacing:.6px;color:rgba(255,255,255,.38);margin-bottom:6px}
+.sub-field input{width:100%;padding:12px 14px;border-radius:9px;
+                  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);
+                  color:#e2e8f0;font-size:15px;outline:none}
+.sub-field input:focus{border-color:rgba(99,102,241,.5)}
+.sub-btn{width:100%;padding:14px;border-radius:9px;border:none;cursor:pointer;
+         background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+         font-size:16px;font-weight:700;transition:opacity .2s;margin-top:6px}
+.sub-btn:hover{opacity:.9}
+.sub-note{font-size:11px;color:rgba(255,255,255,.25);margin-top:12px}
+.footer{text-align:center;padding:24px;color:rgba(255,255,255,.25);font-size:12px}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-logo"><span>&#x1F4C8;</span> Stock Tracker</div>
+  <div class="nav-links">
+    <a href="/login" class="nav-login">&#x1F511; Subscriber Log In</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="badge">&#x2728; AI-Powered &bull; Live Data &bull; Paper &amp; Live Trading</div>
+  <h1>Smarter Trading<br><span class="acc">Powered by ML</span></h1>
+  <p class="hero-sub">
+    Real-time watchlist with ML signals, options intelligence, order flow detection,
+    crypto &amp; NGX market insights — delivered to your inbox.
+  </p>
+</div>
+
+<div class="features">
+  <div class="feat"><div class="feat-icon">&#x1F916;</div>
+    <h3>ML Predictions</h3>
+    <p>Multi-timeframe models with BULLISH/BEARISH signals and confidence scores.</p>
+  </div>
+  <div class="feat"><div class="feat-icon">&#x1F30A;</div>
+    <h3>Order Flow</h3>
+    <p>Volume spike detection, sell-off alerts, buy/sell pressure &amp; price velocity.</p>
+  </div>
+  <div class="feat"><div class="feat-icon">&#x1F4CA;</div>
+    <h3>Options Intelligence</h3>
+    <p>Golden sweeps, dark pool blocks, OI levels &mdash; call wall, put wall, max pain.</p>
+  </div>
+  <div class="feat"><div class="feat-icon">&#x1F4BC;</div>
+    <h3>Alpaca Trading</h3>
+    <p>Market, limit, stop-limit &amp; trailing stop orders. Auto-execute on signals.</p>
+  </div>
+  <div class="feat"><div class="feat-icon">&#x20BF;</div>
+    <h3>Crypto + NGX</h3>
+    <p>Fear &amp; Greed, BTC regime, dominance, USD/NGN rate &amp; NGX market hours.</p>
+  </div>
+  <div class="feat"><div class="feat-icon">&#x26A1;</div>
+    <h3>Instant Alerts</h3>
+    <p>Email &amp; SMS alerts for price surges, RSI extremes, earnings &amp; high-confidence signals.</p>
+  </div>
+</div>
+
+<div class="subscribe-section" id="subscribe">
+  <h2>Get Free Alerts</h2>
+  <p>Enter your email to subscribe and get access to the full dashboard.</p>
+  <div class="sub-form">
+    <form method="POST" action="/subscribe">
+      <div class="sub-field">
+        <label>Email Address</label>
+        <input type="email" name="email" placeholder="you@example.com" required>
+      </div>
+      <div class="sub-field">
+        <label>Phone (optional, for SMS)</label>
+        <input type="tel" name="phone_number" placeholder="+1 555 000 0000">
+        <input type="hidden" name="carrier" value="">
+      </div>
+      <button type="submit" class="sub-btn">&#x1F4E7; Subscribe &amp; Get Access</button>
+      <div class="sub-note">Free &bull; Unsubscribe any time &bull; No spam</div>
+    </form>
+  </div>
+</div>
+
+<div class="footer">
+  &#x1F4C8; Stock Tracker &bull; Data via Yahoo Finance &bull; Not financial advice
+</div>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
+
+
 def create_app() -> Flask:
     _app = Flask(__name__)
+
+    # ── Secret key (stable across restarts via kv_store) ─────────────────────
+    _secret = _os.environ.get("SECRET_KEY") or db.get_kv("flask_secret_key")
+    if not _secret:
+        import secrets as _sec
+        _secret = _sec.token_hex(32)
+        db.set_kv("flask_secret_key", _secret)
+    _app.secret_key = _secret
+
+    # ── Auth gate ─────────────────────────────────────────────────────────────
+    _PUBLIC_PATHS = {"/", "/login", "/login/request", "/login/verify",
+                     "/logout", "/subscribe", "/unsubscribe"}
+
+    @_app.before_request
+    def _check_auth():
+        path = request.path
+        # Allow public paths and all unsubscribe variants
+        if path in _PUBLIC_PATHS or path.startswith("/unsubscribe"):
+            return None
+        if session.get("subscriber_email"):
+            return None
+        # API / trading endpoints return JSON 401
+        if (path.startswith("/api/") or path.startswith("/trade")
+                or path == "/cancel-order"):
+            return Response(_json.dumps({"error": "Login required"}),
+                            status=401, mimetype="application/json")
+        # Everything else → login page
+        return redirect(f"/login?next={path}")
 
     @_app.after_request
     def _security_headers(response: Response) -> Response:
@@ -1294,6 +1637,62 @@ def create_app() -> Flask:
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
+    # ── auth routes ───────────────────────────────────────────────────────────
+
+    @_app.route("/login")
+    def login_page():
+        if session.get("subscriber_email"):
+            return redirect("/")
+        next_url = request.args.get("next", "/")
+        return Response(_LOGIN_PAGE_HTML.replace("__NEXT__", next_url),
+                        mimetype="text/html")
+
+    @_app.route("/login/request", methods=["POST"])
+    def login_request():
+        """Step 1: check subscriber email and send OTP."""
+        body  = request.get_json(force=True) or {}
+        email = str(body.get("email", "")).lower().strip()
+        if not email or "@" not in email:
+            return Response(_json.dumps({"ok": False, "error": "Enter a valid email address."}),
+                            mimetype="application/json")
+        if not db.is_active_subscriber_email(email):
+            return Response(_json.dumps({"ok": False,
+                "error": "That email isn't registered as a subscriber. Use the link below to sign up."}),
+                mimetype="application/json")
+        config = cfg_mod.load_config()
+        code   = db.create_login_otp(email)
+        sent   = _send_otp_email(email, code, config)
+        if not sent:
+            # Fallback: if email is not configured, log the code so admin can share it manually
+            print(f"[login] OTP for {email}: {code} (email not configured)", flush=True)
+        return Response(_json.dumps({"ok": True}), mimetype="application/json")
+
+    @_app.route("/login/verify", methods=["POST"])
+    def login_verify():
+        """Step 2: verify OTP and create session."""
+        body  = request.get_json(force=True) or {}
+        email = str(body.get("email", "")).lower().strip()
+        code  = str(body.get("code", "")).strip()
+        if not email or not code:
+            return Response(_json.dumps({"ok": False, "error": "Missing email or code."}),
+                            mimetype="application/json")
+        if db.verify_login_otp(email, code):
+            session["subscriber_email"] = email
+            session.permanent = True
+            next_url = str(body.get("next", "/"))
+            if not next_url.startswith("/"):
+                next_url = "/"
+            return Response(_json.dumps({"ok": True, "next": next_url}),
+                            mimetype="application/json")
+        return Response(_json.dumps({"ok": False,
+            "error": "Invalid or expired code — check your inbox or request a new one."}),
+            mimetype="application/json")
+
+    @_app.route("/logout")
+    def logout():
+        session.clear()
+        return redirect("/login")
+
     # ── trading endpoints ─────────────────────────────────────────────────────
 
     @_app.route("/trade", methods=["POST"])
@@ -1472,6 +1871,10 @@ def create_app() -> Flask:
 
     @_app.route("/")
     def index():
+        # ── non-subscribers see the public landing page ───────────────────────
+        if not session.get("subscriber_email"):
+            return _public_landing()
+
         config      = cfg_mod.load_config()
         watchlist   = config.get("watchlist", [])
         stock_sectors = config.get("stock_sectors", {})
@@ -2721,7 +3124,7 @@ def create_app() -> Flask:
     <a href="#options">Options</a>
     <a href="#oi-levels">OI Levels</a>
     <a href="/learn">Knowledge Base</a>
-    <a href="#subscribe" class="nav-cta">Get Alerts</a>
+    <a href="/logout" style="color:rgba(255,255,255,.4);font-size:13px">Log Out</a>
   </div>
 </nav>
 
