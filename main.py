@@ -283,6 +283,7 @@ def refresh_all(config: dict) -> None:
             pass
 
         # ── Crypto context ────────────────────────────────────────────────────
+        print(f"[refresh] computing crypto/NGX context...", flush=True)
         _crypto_stocks = [s for s in stocks_out if sec_mod.is_crypto(s["symbol"])]
         _crypto_correlations = {
             s["symbol"]: s.get("btc_corr")
@@ -299,8 +300,9 @@ def refresh_all(config: dict) -> None:
         try:
             import json as _cjson
             db.set_kv("crypto_context", _cjson.dumps(crypto_context))
-        except Exception:
-            pass
+            print(f"[refresh] crypto_context saved — fg={_fear_greed.get('value')} btcdom={_btc_dominance.get('btc')} regime={_btc_regime.get('label')} corrs={len(_crypto_correlations)}", flush=True)
+        except Exception as _ce:
+            print(f"[refresh] crypto_context ERROR: {_ce}", flush=True)
 
         # ── NGX context ───────────────────────────────────────────────────────
         _ngx_stocks = [
@@ -315,8 +317,9 @@ def refresh_all(config: dict) -> None:
         try:
             import json as _njson
             db.set_kv("ngx_context", _njson.dumps(ngx_context))
-        except Exception:
-            pass
+            print(f"[refresh] ngx_context saved — ngx_stocks={len(_ngx_stocks)} rate={ngx_context['usdngn'].get('rate')} open={ngx_context['mkt_status'].get('is_open')}", flush=True)
+        except Exception as _ne:
+            print(f"[refresh] ngx_context ERROR: {_ne}", flush=True)
 
         earnings_list = earn_mod.refresh_earnings_calendar(watchlist, hist_data)
         new_alerts = alert_mod.check_and_fire_alerts(

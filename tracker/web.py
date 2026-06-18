@@ -1151,6 +1151,20 @@ def create_app() -> Flask:
             "sms_preview": sms_text,
         }, indent=2), mimetype="application/json")
 
+    @_app.route("/api/kv/<key>")
+    def api_kv(key: str):
+        """Debug: read a kv_store entry as JSON."""
+        raw = db.get_kv(key)
+        if raw is None:
+            return Response(_json.dumps({"key": key, "found": False}),
+                            mimetype="application/json")
+        try:
+            return Response(_json.dumps({"key": key, "found": True, "value": _json.loads(raw)}),
+                            mimetype="application/json")
+        except Exception:
+            return Response(_json.dumps({"key": key, "found": True, "raw": raw[:500]}),
+                            mimetype="application/json")
+
     @_app.route("/status")
     def status():
         import json as _json
