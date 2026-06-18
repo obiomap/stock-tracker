@@ -155,6 +155,41 @@ def place_stop_limit_order(symbol: str, qty: float, side: str,
         return {"ok": False, "error": str(e)}
 
 
+def place_trailing_stop_order(symbol: str, qty: float, side: str,
+                              trail_percent: Optional[float] = None,
+                              trail_price: Optional[float] = None) -> dict:
+    """
+    Submit a DAY trailing stop order.
+    Provide either trail_percent (e.g. 2.0 for 2%) or trail_price (e.g. 1.50 for $1.50).
+    """
+    if not is_configured():
+        return {"ok": False, "error": "Alpaca credentials not configured"}
+    if qty <= 0:
+        return {"ok": False, "error": "Quantity must be > 0"}
+    if not trail_percent and not trail_price:
+        return {"ok": False, "error": "Provide trail_percent or trail_price"}
+    try:
+        from alpaca.trading.requests import TrailingStopOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        kwargs: dict = dict(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        if trail_percent:
+            kwargs["trail_percent"] = trail_percent
+        else:
+            kwargs["trail_price"] = trail_price
+        order = _client().submit_order(TrailingStopOrderRequest(**kwargs))
+        return {"ok": True, "id": str(order.id), "status": str(order.status),
+                "symbol": order.symbol, "qty": float(order.qty or qty),
+                "side": side.upper(), "paper": is_paper(), "type": "trailing_stop",
+                "trail_percent": trail_percent, "trail_price": trail_price}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def get_orders(status: str = "open") -> list[dict]:
     """Return open/all orders. status = 'open' | 'all' | 'closed'."""
     if not is_configured():

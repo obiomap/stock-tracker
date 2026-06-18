@@ -763,6 +763,11 @@ body{
 .trade-type-tab.active{background:rgba(99,102,241,.25);border-color:rgba(99,102,241,.5);
                         color:#a5b4fc}
 .trade-field-price{display:none}
+.trade-trail-row{display:none;gap:8px}
+.trade-trail-row.show{display:flex}
+.trade-trail-row .trade-field{flex:1;margin-bottom:0}
+.trade-trail-sep{display:flex;align-items:center;padding-top:18px;
+                 font-size:11px;color:rgba(255,255,255,.35);white-space:nowrap}
 
 /* ── ORDER FLOW SIGNALS ── */
 .of-signal{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
@@ -1354,6 +1359,29 @@ def create_app() -> Flask:
                 return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
                                 status=400, mimetype="application/json")
             result = broker_mod.place_stop_limit_order(symbol, qty, side, limit_price, stop_price)
+            return Response(_json.dumps(result),
+                            status=200 if result["ok"] else 400, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/trade/trailing-stop", methods=["POST"])
+    def trade_trailing_stop():
+        """Submit a trailing stop order. Body: {symbol, qty, side, trail_percent|trail_price}."""
+        try:
+            body          = request.get_json(force=True) or {}
+            symbol        = str(body.get("symbol", "")).upper().strip()
+            qty           = float(body.get("qty", 0))
+            side          = str(body.get("side", "")).upper()
+            trail_percent = float(body["trail_percent"]) if body.get("trail_percent") else None
+            trail_price   = float(body["trail_price"])   if body.get("trail_price")   else None
+            if not symbol or qty <= 0 or side not in ("BUY", "SELL"):
+                return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
+                                status=400, mimetype="application/json")
+            if not trail_percent and not trail_price:
+                return Response(_json.dumps({"ok": False, "error": "Provide trail_percent or trail_price"}),
+                                status=400, mimetype="application/json")
+            result = broker_mod.place_trailing_stop_order(symbol, qty, side, trail_percent, trail_price)
             return Response(_json.dumps(result),
                             status=200 if result["ok"] else 400, mimetype="application/json")
         except Exception as e:
@@ -2975,6 +3003,7 @@ def create_app() -> Flask:
       <button class="trade-type-tab active" id="ttMarket" onclick="setOrderType('market')">Market</button>
       <button class="trade-type-tab" id="ttLimit" onclick="setOrderType('limit')">Limit</button>
       <button class="trade-type-tab" id="ttStopLimit" onclick="setOrderType('stop-limit')">Stop-Limit</button>
+      <button class="trade-type-tab" id="ttTrailing" onclick="setOrderType('trailing')">Trail</button>
     </div>
     <div class="trade-field">
       <label>Symbol</label>
@@ -2995,6 +3024,17 @@ def create_app() -> Flask:
     <div class="trade-field trade-field-price" id="tradeStopField">
       <label>Stop Price ($)</label>
       <input type="number" id="tradeStopPrice" min="0.01" step="0.01" placeholder="0.00">
+    </div>
+    <div class="trade-trail-row" id="tradeTrailRow">
+      <div class="trade-field">
+        <label>Trail % (e.g. 2)</label>
+        <input type="number" id="tradeTrailPct" min="0.01" max="50" step="0.01" placeholder="e.g. 2.0">
+      </div>
+      <div class="trade-trail-sep">or</div>
+      <div class="trade-field">
+        <label>Trail $ (e.g. 1.50)</label>
+        <input type="number" id="tradeTrailAmt" min="0.01" step="0.01" placeholder="e.g. 1.50">
+      </div>
     </div>
     <div class="trade-actions">
       <button class="trade-cancel" onclick="closeTradeModal()">Cancel</button>
@@ -3216,14 +3256,17 @@ var _isPaper = {'true' if broker_paper else 'false'};
 
 window.setOrderType = function(ot) {{
   _orderType = ot;
-  ['market','limit','stop-limit'].forEach(function(t) {{
-    var el = document.getElementById('tt' + t.charAt(0).toUpperCase() + t.slice(1).replace('-',''));
+  ['market','limit','stop-limit','trailing'].forEach(function(t) {{
+    var id = 'tt' + t.split('-').map(function(w){{return w.charAt(0).toUpperCase()+w.slice(1);}}).join('');
+    var el = document.getElementById(id);
     if(el) el.className = 'trade-type-tab' + (t === ot ? ' active' : '');
   }});
   var lf = document.getElementById('tradeLimitField');
   var sf = document.getElementById('tradeStopField');
+  var tr = document.getElementById('tradeTrailRow');
   if(lf) lf.style.display = (ot === 'limit' || ot === 'stop-limit') ? 'block' : 'none';
   if(sf) sf.style.display = (ot === 'stop-limit') ? 'block' : 'none';
+  if(tr) tr.className = 'trade-trail-row' + (ot === 'trailing' ? ' show' : '');
 }};
 
 window.openTradeModal = function(sym, price, side) {{
@@ -3244,6 +3287,10 @@ window.openTradeModal = function(sym, price, side) {{
   var sp = document.getElementById('tradeStopPrice');
   if(lp) lp.value = price ? price.toFixed(2) : '';
   if(sp) sp.value = price ? (price * 0.99).toFixed(2) : '';
+  var tpct = document.getElementById('tradeTrailPct');
+  var tamt = document.getElementById('tradeTrailAmt');
+  if(tpct) tpct.value = '2';
+  if(tamt) tamt.value = '';
   document.getElementById('tradeOverlay').classList.add('open');
   setTimeout(function(){{ document.getElementById('tradeQty').focus(); }}, 50);
 }};
@@ -3274,6 +3321,13 @@ window.submitTrade = function() {{
     endpoint = '/trade/stop-limit';
     payload.limit_price = lp2;
     payload.stop_price  = sp;
+  }} else if (_orderType === 'trailing') {{
+    var tpct = parseFloat((document.getElementById('tradeTrailPct')||{{}}).value) || 0;
+    var tamt = parseFloat((document.getElementById('tradeTrailAmt')||{{}}).value) || 0;
+    if (tpct <= 0 && tamt <= 0) {{ res.style.color = '#ef4444'; res.textContent = 'Enter a trail % or trail $ amount.'; return; }}
+    endpoint = '/trade/trailing-stop';
+    if (tpct > 0) payload.trail_percent = tpct;
+    else           payload.trail_price  = tamt;
   }}
 
   btn.disabled = true;
