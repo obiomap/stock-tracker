@@ -773,6 +773,44 @@ body{
 .pos-acct-item{font-size:12px;color:rgba(255,255,255,.45)}
 .pos-acct-val{font-size:15px;font-weight:700;color:#e2e8f0;display:block}
 
+/* ── CRYPTO INTELLIGENCE ── */
+.crypto-section{margin-bottom:40px}
+.crypto-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:14px}
+.crypto-card{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+             border-radius:12px;padding:14px 18px}
+.crypto-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+              color:rgba(255,255,255,.38);margin-bottom:6px}
+.crypto-val{font-size:20px;font-weight:800;line-height:1.1}
+.crypto-sub{font-size:12px;color:rgba(255,255,255,.42);margin-top:3px}
+.fg-bar{height:8px;border-radius:4px;margin-top:8px;overflow:hidden;
+        background:linear-gradient(90deg,#ef4444,#f59e0b,#10b981)}
+.fg-cursor{width:4px;height:100%;background:#fff;border-radius:2px;
+           position:relative;transition:left .4s}
+.corr-table{width:100%;font-size:12px;border-collapse:collapse;margin-top:6px}
+.corr-table td{padding:3px 6px}
+.corr-table td:last-child{text-align:right;font-weight:700}
+.corr-hi{color:#ef4444}.corr-mid{color:#f59e0b}.corr-lo{color:#10b981}
+.dom-bar{height:14px;border-radius:7px;background:rgba(255,255,255,.08);
+         margin-top:8px;overflow:hidden;display:flex}
+.dom-btc{background:#f59e0b;height:100%}
+.dom-eth{background:#818cf8;height:100%}
+.dom-other{background:rgba(255,255,255,.18);height:100%;flex:1}
+
+/* ── NGX INTELLIGENCE ── */
+.ngx-section{margin-bottom:40px}
+.ngx-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.ngx-card{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+          border-radius:12px;padding:14px 18px}
+.ngx-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+           color:rgba(255,255,255,.38);margin-bottom:6px}
+.ngx-val{font-size:20px;font-weight:800;line-height:1.1}
+.ngx-sub{font-size:12px;color:rgba(255,255,255,.42);margin-top:3px}
+.ngx-open{color:#10b981}.ngx-closed{color:#94a3b8}
+.ngx-mover{display:flex;justify-content:space-between;font-size:12px;
+           padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.ngx-mover:last-child{border-bottom:none}
+.ngx-sym{color:#e2e8f0;font-weight:700}
+
 /* ── OI LEVELS ── */
 .oi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:12px}
 .oi-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);
@@ -2108,6 +2146,175 @@ def create_app() -> Flask:
   </div>
 """
 
+        # -- crypto intelligence section
+        _cr_raw = db.get_kv("crypto_context")
+        _cr = {}
+        try:
+            if _cr_raw:
+                _cr = _json.loads(_cr_raw)
+        except Exception:
+            pass
+
+        _fg      = _cr.get("fear_greed") or {}
+        _fg_val  = _fg.get("value")
+        _fg_lbl  = _fg.get("label", "unknown").title()
+        _fg_trnd = _fg.get("trend", "")
+        _fg_css  = ("spx-sbear" if (_fg_val or 0) <= 25 else
+                    "spx-bear"  if (_fg_val or 0) <= 45 else
+                    "spx-neut"  if (_fg_val or 0) <= 55 else
+                    "spx-bull"  if (_fg_val or 0) <= 75 else "spx-sbull")
+        _fg_display = str(_fg_val) if _fg_val is not None else "—"
+        _fg_cursor_pct = _fg_val if _fg_val is not None else 50
+
+        _dom     = _cr.get("btc_dominance") or {}
+        _btc_dom = _dom.get("btc")
+        _eth_dom = _dom.get("eth")
+        _dom_display = f"{_btc_dom}%" if _btc_dom is not None else "—"
+        _eth_display = f"{_eth_dom}%" if _eth_dom is not None else ""
+        _btc_dom_pct = _btc_dom or 0
+        _eth_dom_pct = _eth_dom or 0
+
+        _btr       = _cr.get("btc_regime") or {}
+        _btr_lbl   = _btr.get("label", "neutral")
+        _btr_css   = {
+            "strong bull": "spx-sbull", "bull": "spx-bull",
+            "neutral": "spx-neut", "bear": "spx-bear", "strong bear": "spx-sbear",
+        }.get(_btr_lbl, "spx-neut")
+        _btr_ma20  = _btr.get("ma20")
+        _btr_ma50  = _btr.get("ma50")
+        _btr_sub   = (f'MA20 ${_btr_ma20:,.0f} &bull; MA50 ${_btr_ma50:,.0f}'
+                      if _btr_ma20 and _btr_ma50 else "Awaiting BTC data")
+
+        _corrs     = _cr.get("correlations") or {}
+        _corr_rows = ""
+        for _csym, _cval in sorted(_corrs.items(), key=lambda x: abs(x[1] or 0), reverse=True)[:8]:
+            if _cval is None:
+                continue
+            _cdisp = sec_mod.display_symbol(_csym)
+            _ccls  = ("corr-hi" if _cval >= 0.7 else
+                      "corr-mid" if _cval >= 0.4 else "corr-lo")
+            _corr_rows += (f'<tr><td class="ngx-sym">{_cdisp}</td>'
+                           f'<td class="{_ccls}">{_cval:.2f}</td></tr>')
+        if not _corr_rows:
+            _corr_rows = '<tr><td colspan="2" style="color:rgba(255,255,255,.28)">Awaiting data</td></tr>'
+
+        crypto_section_html = f"""
+  <div class="crypto-section" id="crypto-intel">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x20BF; Crypto Intelligence</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">Fear &amp; Greed &bull; BTC Dominance &bull; BTC Regime &bull; Correlation</span>
+    </div>
+    <div class="crypto-grid">
+      <div class="crypto-card">
+        <div class="crypto-label">Fear &amp; Greed Index</div>
+        <div class="crypto-val {_fg_css}">{_fg_display}</div>
+        <div class="crypto-sub">{_fg_lbl}{'&nbsp;&bull;&nbsp;' + _fg_trnd.title() if _fg_trnd else ''}</div>
+        <div class="fg-bar" style="position:relative">
+          <div class="fg-cursor" style="position:absolute;left:calc({_fg_cursor_pct}% - 2px);top:0"></div>
+        </div>
+      </div>
+      <div class="crypto-card">
+        <div class="crypto-label">BTC Dominance</div>
+        <div class="crypto-val" style="color:#f59e0b">{_dom_display}</div>
+        <div class="crypto-sub">ETH {_eth_display}</div>
+        <div class="dom-bar">
+          <div class="dom-btc" style="width:{_btc_dom_pct}%"></div>
+          <div class="dom-eth" style="width:{_eth_dom_pct}%"></div>
+          <div class="dom-other"></div>
+        </div>
+      </div>
+      <div class="crypto-card">
+        <div class="crypto-label">BTC Regime</div>
+        <div class="crypto-val {_btr_css}">{_btr_lbl.upper() if _btr_lbl else '—'}</div>
+        <div class="crypto-sub">{_btr_sub}</div>
+      </div>
+      <div class="crypto-card" style="grid-column:span 2">
+        <div class="crypto-label">30-Day BTC Correlation</div>
+        <div class="crypto-sub" style="margin-bottom:6px">1.0 = moves with BTC &bull; 0 = independent &bull; &lt;0 = inverse</div>
+        <table class="corr-table"><tbody>{_corr_rows}</tbody></table>
+      </div>
+    </div>
+  </div>"""
+
+        # -- NGX intelligence section
+        _ngx_raw = db.get_kv("ngx_context")
+        _ngx = {}
+        try:
+            if _ngx_raw:
+                _ngx = _json.loads(_ngx_raw)
+        except Exception:
+            pass
+
+        _ngx_mkt    = _ngx.get("mkt_status") or {}
+        _ngx_open   = _ngx_mkt.get("is_open", False)
+        _ngx_time   = _ngx_mkt.get("local_time", "—")
+        _ngx_session = _ngx_mkt.get("session", "closed")
+        _ngx_status_css = "ngx-open" if _ngx_open else "ngx-closed"
+        _ngx_status_lbl = "OPEN" if _ngx_open else _ngx_session.upper().replace("-", " ")
+        _ngx_mins   = _ngx_mkt.get("mins_to_close") if _ngx_open else _ngx_mkt.get("mins_to_open")
+        _ngx_mins_lbl = (f"Closes in {_ngx_mins}m" if _ngx_open and _ngx_mins is not None
+                         else f"Opens in {_ngx_mins//60}h {_ngx_mins%60}m" if _ngx_mins else "")
+
+        _ngx_usd    = _ngx.get("usdngn") or {}
+        _ngx_rate   = _ngx_usd.get("rate")
+        _ngx_chg    = _ngx_usd.get("change_pct")
+        _ngx_rate_lbl = f"₦{_ngx_rate:,.0f}" if _ngx_rate else "—"
+        _ngx_chg_css = ("spx-bear" if (_ngx_chg or 0) > 0 else "spx-bull") if _ngx_chg else "spx-neut"
+        _ngx_chg_lbl  = (f"{'+' if _ngx_chg >= 0 else ''}{_ngx_chg:.2f}% vs yesterday"
+                         if _ngx_chg is not None else "")
+
+        _ngx_breadth_pct  = _ngx.get("breadth_pct") or 0
+        _ngx_breadth_abv  = _ngx.get("breadth_above") or 0
+        _ngx_breadth_tot  = _ngx.get("breadth_total") or 0
+        _ngx_avg_chg      = _ngx.get("avg_change") or 0
+        _ngx_breadth_css  = ("spx-bull" if _ngx_breadth_pct >= 60
+                              else "spx-bear" if _ngx_breadth_pct < 40 else "spx-neut")
+        _ngx_breadth_fill = ("#10b981" if _ngx_breadth_pct >= 60
+                              else "#ef4444" if _ngx_breadth_pct < 40 else "#f59e0b")
+
+        def _ngx_mover_rows(stocks):
+            rows = ""
+            for m in stocks:
+                chg = m.get("change_pct") or 0
+                css = "up" if chg >= 0 else "down"
+                rows += (f'<div class="ngx-mover">'
+                         f'<span class="ngx-sym">{sec_mod.display_symbol(m["symbol"])}</span>'
+                         f'<span class="{css}">{chg:+.2f}%</span></div>')
+            return rows or '<div style="font-size:12px;color:rgba(255,255,255,.28)">No data yet</div>'
+
+        ngx_section_html = f"""
+  <div class="ngx-section" id="ngx-intel">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F1F3;&#x1F1EC; NGX Intelligence</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">Nigerian Exchange &bull; USD/NGN &bull; Market hours &bull; Breadth</span>
+    </div>
+    <div class="ngx-grid">
+      <div class="ngx-card">
+        <div class="ngx-label">Market Status</div>
+        <div class="ngx-val {_ngx_status_css}">{_ngx_status_lbl}</div>
+        <div class="ngx-sub">{_ngx_time}{'&nbsp;&bull;&nbsp;' + _ngx_mins_lbl if _ngx_mins_lbl else ''}</div>
+      </div>
+      <div class="ngx-card">
+        <div class="ngx-label">USD / NGN Rate</div>
+        <div class="ngx-val" style="color:#f59e0b">{_ngx_rate_lbl}</div>
+        <div class="ngx-sub {_ngx_chg_css}">{_ngx_chg_lbl or '—'}</div>
+      </div>
+      <div class="ngx-card">
+        <div class="ngx-label">NGX Breadth</div>
+        <div class="ngx-val {_ngx_breadth_css}">{f'{_ngx_breadth_pct:.0f}%' if _ngx_breadth_tot else '—'}</div>
+        <div class="ngx-sub">{_ngx_breadth_abv} of {_ngx_breadth_tot} stocks above MA50</div>
+        <div class="spx-breadth-bar">
+          <div class="spx-breadth-fill" style="width:{_ngx_breadth_pct:.0f}%;background:{_ngx_breadth_fill}"></div>
+        </div>
+      </div>
+      <div class="ngx-card">
+        <div class="ngx-label">Top Movers</div>
+        {_ngx_mover_rows(_ngx.get('top_gainers') or [])}
+        {_ngx_mover_rows(_ngx.get('top_losers') or [])}
+      </div>
+    </div>
+  </div>"""
+
         # -- OI levels section
         if _oi_cards:
             oi_section_html = f"""
@@ -2155,6 +2362,8 @@ def create_app() -> Flask:
   <div class="nav-links">
     <a href="#watchlist">&#x1F4CA; Live Prices</a>
     <a href="#spx-pulse">&#x1F4C8; SPX Pulse</a>
+    <a href="#crypto-intel">&#x20BF; Crypto</a>
+    <a href="#ngx-intel">&#x1F1F3;&#x1F1EC; NGX</a>
     {'<a href="#positions">&#x1F4BC; Positions</a>' if broker_on else ''}
     <a href="#flow">&#x1F30A; Flow</a>
     <a href="#options">Options</a>
@@ -2277,6 +2486,12 @@ def create_app() -> Flask:
 
   <!-- SPX MARKET PULSE -->
   {spx_html}
+
+  <!-- CRYPTO INTELLIGENCE -->
+  {crypto_section_html}
+
+  <!-- NGX INTELLIGENCE -->
+  {ngx_section_html}
 
   <!-- POSITIONS -->
   {positions_html}

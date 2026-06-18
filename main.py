@@ -29,6 +29,8 @@ from tracker import sms as sms_mod
 from tracker import options as opt_mod
 from tracker import sweeps as sweeps_mod
 from tracker import supply_demand as sd_mod
+from tracker import crypto_intel as crypto_mod
+from tracker import ngx_intel as ngx_mod
 
 console = Console()
 
@@ -150,6 +152,14 @@ def refresh_all(config: dict) -> None:
         _spy_price = float(_spy_snap.get("price") or 0.0)
         _spy_chg   = float(_spy_snap.get("change_pct") or 0.0)
 
+        # Pre-fetch BTC history + crypto external APIs (cached, non-blocking on error)
+        _btc_hist  = fetcher.fetch_history("BTC-USD", period="2y")
+        _btc_snap  = snaps.get("BTC-USD") or {}
+        _btc_price = float(_btc_snap.get("price") or 0.0)
+        _fear_greed    = crypto_mod.fetch_fear_greed()
+        _btc_dominance = crypto_mod.fetch_btc_dominance()
+        _btc_regime    = crypto_mod.compute_btc_regime(_btc_hist, _btc_price)
+
         stocks_out = []
         predictions_out = {}
         hist_data  = {}
@@ -184,6 +194,11 @@ def refresh_all(config: dict) -> None:
                     market_regime=market_regime,
                     vix=market_context.get("vix") or 0.0
                 )
+                # NGX/LSE low-liquidity confidence adjustment
+                if sym.endswith(".L"):
+                    prediction["confidence"] = round(
+                        ngx_mod.ngx_liquidity_adjust(prediction["confidence"], sym), 2
+                    )
                 predictions_out[sym] = prediction
 
                 sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
@@ -216,6 +231,11 @@ def refresh_all(config: dict) -> None:
                     "demand_zone": _sd["demand"][0]["price"] if _sd["demand"] else None,
                     "supply_zone": _sd["supply"][0]["price"] if _sd["supply"] else None,
                     "poc_price":   _sd.get("poc"),
+                    "btc_corr": (
+                        crypto_mod.btc_correlation(hist, _btc_hist)
+                        if sec_mod.is_crypto(sym) and sym != "BTC-USD"
+                        else (1.0 if sym == "BTC-USD" else None)
+                    ),
                     # Extra indicator fields passed in-memory to alerts (not stored in DB)
                     "macd_hist":         ind_data.get("macd_hist"),
                     "obv_roc_5d":        ind_data.get("obv_roc_5d"),
@@ -259,6 +279,42 @@ def refresh_all(config: dict) -> None:
         try:
             import json as _mcjson
             db.set_kv("market_context", _mcjson.dumps(market_context))
+        except Exception:
+            pass
+
+        # ── Crypto context ────────────────────────────────────────────────────
+        _crypto_stocks = [s for s in stocks_out if sec_mod.is_crypto(s["symbol"])]
+        _crypto_correlations = {
+            s["symbol"]: s.get("btc_corr")
+            for s in _crypto_stocks
+            if s.get("btc_corr") is not None
+        }
+        crypto_context = {
+            "fear_greed":   _fear_greed,
+            "btc_dominance": _btc_dominance,
+            "btc_regime":   _btc_regime,
+            "btc_price":    _btc_price,
+            "correlations": _crypto_correlations,
+        }
+        try:
+            import json as _cjson
+            db.set_kv("crypto_context", _cjson.dumps(crypto_context))
+        except Exception:
+            pass
+
+        # ── NGX context ───────────────────────────────────────────────────────
+        _ngx_stocks = [
+            s for s in stocks_out
+            if s["symbol"].endswith(".L") or
+               sec_mod.resolve_sector(s["symbol"], config.get("stock_sectors", {}))
+               == "Nigerian Exchange (NGX)"
+        ]
+        ngx_context = ngx_mod.compute_ngx_context(_ngx_stocks)
+        ngx_context["usdngn"]     = ngx_mod.fetch_usdngn()
+        ngx_context["mkt_status"] = ngx_mod.ngx_market_status()
+        try:
+            import json as _njson
+            db.set_kv("ngx_context", _njson.dumps(ngx_context))
         except Exception:
             pass
 
