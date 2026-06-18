@@ -2141,8 +2141,8 @@ def create_app() -> Flask:
   </div>
 """
 
-        # -- positions card (Alpaca)
-        if broker_on and positions:
+        # -- positions card (Alpaca) — always render when broker configured
+        if broker_on:
             _acct_html = ""
             if acct:
                 _pb  = '<span class="trade-paper-badge">PAPER</span>' if acct.get("paper") else '<span class="trade-live-badge">LIVE</span>'
@@ -2167,6 +2167,8 @@ def create_app() -> Flask:
                     f'<td>${_p["market_value"]:,.2f}</td>'
                     f'</tr>'
                 )
+            if not _pos_rows:
+                _pos_rows = '<tr><td colspan="6" style="text-align:center;padding:20px;color:rgba(255,255,255,.28)">No open positions</td></tr>'
             positions_html = f"""
   <div class="pos-section" id="positions">
     <div class="section-head" style="margin-bottom:12px">
@@ -2179,7 +2181,7 @@ def create_app() -> Flask:
           <th>Symbol</th><th>Qty</th><th>Avg Entry</th>
           <th>Price</th><th>Unrealized P&amp;L</th><th>Value</th>
         </tr></thead>
-        <tbody>{_pos_rows}</tbody>
+        <tbody id="positionsTableBody">{_pos_rows}</tbody>
       </table>
     </div>
   </div>"""
@@ -3849,10 +3851,43 @@ window.optSwitch = function(tab) {{
   if(tp) {{ tp.className = 'opt-tab' + (tab==='put'  ? ' active-put'  : ''); }}
 }};
 
-// ── Auto-refresh orders on load and every 30s ─────────────────────────────
+// ── Auto-refresh orders + positions on load and every 30s ────────────────
+function loadPositions() {{
+  var body = document.getElementById('positionsTableBody');
+  if (!body) return;
+  fetch('/api/positions')
+    .then(function(r) {{ return r.json(); }})
+    .then(function(positions) {{
+      if (!positions.length) {{
+        body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:rgba(255,255,255,.28)">No open positions</td></tr>';
+        return;
+      }}
+      body.innerHTML = positions.map(function(p) {{
+        var pl   = parseFloat(p.unrealized_pl || 0);
+        var plpc = parseFloat(p.unrealized_plpc || 0);
+        var cls  = pl >= 0 ? 'pos-pl-pos' : 'pos-pl-neg';
+        var sign = pl >= 0 ? '+' : '';
+        return '<tr>'
+          + '<td class="pos-sym">' + p.symbol + '</td>'
+          + '<td>' + parseFloat(p.qty) + '</td>'
+          + '<td>$' + parseFloat(p.avg_entry).toFixed(2) + '</td>'
+          + '<td>$' + parseFloat(p.current_price).toFixed(2) + '</td>'
+          + '<td class="' + cls + '">' + sign + '$' + Math.abs(pl).toFixed(2)
+          + ' (' + sign + Math.abs(plpc).toFixed(2) + '%)</td>'
+          + '<td>$' + parseFloat(p.market_value).toLocaleString('en-US',{{minimumFractionDigits:2,maximumFractionDigits:2}}) + '</td>'
+          + '</tr>';
+      }}).join('');
+    }})
+    .catch(function(){{}});
+}}
+
 if (document.getElementById('ordersTableBody')) {{
   loadOpenOrders();
   setInterval(loadOpenOrders, 30000);
+}}
+if (document.getElementById('positionsTableBody')) {{
+  loadPositions();
+  setInterval(loadPositions, 30000);
 }}
 </script>
 """
