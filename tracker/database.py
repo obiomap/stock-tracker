@@ -142,6 +142,13 @@ def init_db() -> None:
                 value TEXT,
                 updated_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS subscriber_orders (
+                order_id TEXT PRIMARY KEY,
+                subscriber_email TEXT NOT NULL,
+                symbol TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            );
         """)
     _migrate_columns()
 
@@ -681,3 +688,44 @@ def verify_login_otp(email: str, code: str) -> bool:
             conn.execute("UPDATE login_otps SET used=1 WHERE id=?", (row["id"],))
             return True
     return False
+
+
+# ── Per-subscriber order ownership ────────────────────────────────────────────
+
+def record_subscriber_order(order_id: str, subscriber_email: str, symbol: str) -> None:
+    """Record that subscriber_email placed order_id for symbol."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO subscriber_orders (order_id, subscriber_email, symbol) VALUES (?,?,?)",
+            (order_id, subscriber_email, symbol),
+        )
+
+
+def get_subscriber_order_ids(subscriber_email: str) -> list:
+    """Return all Alpaca order IDs placed by this subscriber."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT order_id FROM subscriber_orders WHERE subscriber_email=?",
+            (subscriber_email,),
+        ).fetchall()
+    return [r["order_id"] for r in rows]
+
+
+def get_subscriber_symbols(subscriber_email: str) -> list:
+    """Return distinct root symbols this subscriber has traded (for position filtering)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT symbol FROM subscriber_orders WHERE subscriber_email=?",
+            (subscriber_email,),
+        ).fetchall()
+    return [r["symbol"] for r in rows]
+
+
+def is_subscriber_order(order_id: str, subscriber_email: str) -> bool:
+    """Return True if this order belongs to subscriber_email."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM subscriber_orders WHERE order_id=? AND subscriber_email=?",
+            (order_id, subscriber_email),
+        ).fetchone()
+    return row is not None

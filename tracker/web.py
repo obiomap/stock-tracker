@@ -1707,6 +1707,8 @@ def create_app() -> Flask:
                 return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
                                 status=400, mimetype="application/json")
             result = broker_mod.place_order(symbol, qty, side)
+            if result.get("ok"):
+                db.record_subscriber_order(result["id"], session.get("subscriber_email", ""), symbol)
             status = 200 if result["ok"] else 400
             return Response(_json.dumps(result), status=status, mimetype="application/json")
         except Exception as e:
@@ -1715,9 +1717,11 @@ def create_app() -> Flask:
 
     @_app.route("/api/positions")
     def api_positions():
-        """Return current Alpaca positions as JSON."""
-        return Response(_json.dumps(broker_mod.get_positions()),
-                        mimetype="application/json")
+        """Return current Alpaca positions for the logged-in subscriber only."""
+        email = session.get("subscriber_email", "")
+        subscriber_symbols = set(db.get_subscriber_symbols(email))
+        positions = [p for p in broker_mod.get_positions() if p["symbol"] in subscriber_symbols]
+        return Response(_json.dumps(positions), mimetype="application/json")
 
     @_app.route("/api/account")
     def api_account():
@@ -1738,6 +1742,8 @@ def create_app() -> Flask:
                 return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
                                 status=400, mimetype="application/json")
             result = broker_mod.place_limit_order(symbol, qty, side, limit_price)
+            if result.get("ok"):
+                db.record_subscriber_order(result["id"], session.get("subscriber_email", ""), symbol)
             return Response(_json.dumps(result),
                             status=200 if result["ok"] else 400, mimetype="application/json")
         except Exception as e:
@@ -1758,6 +1764,8 @@ def create_app() -> Flask:
                 return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
                                 status=400, mimetype="application/json")
             result = broker_mod.place_stop_limit_order(symbol, qty, side, limit_price, stop_price)
+            if result.get("ok"):
+                db.record_subscriber_order(result["id"], session.get("subscriber_email", ""), symbol)
             return Response(_json.dumps(result),
                             status=200 if result["ok"] else 400, mimetype="application/json")
         except Exception as e:
@@ -1781,6 +1789,8 @@ def create_app() -> Flask:
                 return Response(_json.dumps({"ok": False, "error": "Provide trail_percent or trail_price"}),
                                 status=400, mimetype="application/json")
             result = broker_mod.place_trailing_stop_order(symbol, qty, side, trail_percent, trail_price)
+            if result.get("ok"):
+                db.record_subscriber_order(result["id"], session.get("subscriber_email", ""), symbol)
             return Response(_json.dumps(result),
                             status=200 if result["ok"] else 400, mimetype="application/json")
         except Exception as e:
@@ -1817,6 +1827,8 @@ def create_app() -> Flask:
                                 status=400, mimetype="application/json")
             result = broker_mod.place_option_limit_order(
                 underlying, expiry, strike, opt_type, qty, limit_price)
+            if result.get("ok"):
+                db.record_subscriber_order(result["id"], session.get("subscriber_email", ""), underlying)
             return Response(_json.dumps(result),
                             status=200 if result["ok"] else 400, mimetype="application/json")
         except Exception as e:
@@ -1825,10 +1837,12 @@ def create_app() -> Flask:
 
     @_app.route("/api/orders")
     def api_orders():
-        """Return open Alpaca orders as JSON."""
+        """Return Alpaca orders belonging to the logged-in subscriber."""
         status = request.args.get("status", "open")
-        return Response(_json.dumps(broker_mod.get_orders(status)),
-                        mimetype="application/json")
+        email = session.get("subscriber_email", "")
+        owned_ids = set(db.get_subscriber_order_ids(email))
+        orders = [o for o in broker_mod.get_orders(status) if o["id"] in owned_ids]
+        return Response(_json.dumps(orders), mimetype="application/json")
 
     @_app.route("/cancel-order", methods=["POST"])
     def cancel_order():
@@ -1839,6 +1853,10 @@ def create_app() -> Flask:
             if not order_id:
                 return Response(_json.dumps({"ok": False, "error": "order_id required"}),
                                 status=400, mimetype="application/json")
+            email = session.get("subscriber_email", "")
+            if not db.is_subscriber_order(order_id, email):
+                return Response(_json.dumps({"ok": False, "error": "Not authorized"}),
+                                status=403, mimetype="application/json")
             result = broker_mod.cancel_order(order_id)
             return Response(_json.dumps(result),
                             status=200 if result["ok"] else 400, mimetype="application/json")
@@ -1917,11 +1935,14 @@ def create_app() -> Flask:
         all_db      = {s["symbol"]: s for s in db.get_all_stocks()}
         public_url  = config.get("social", {}).get("public_url", "")
 
-        # -- broker / positions
-        broker_on  = broker_mod.is_configured()
+        # -- broker / positions (filtered to this subscriber's traded symbols)
+        broker_on    = broker_mod.is_configured()
         broker_paper = broker_mod.is_paper()
-        positions  = broker_mod.get_positions() if broker_on else []
-        acct       = broker_mod.get_account()   if broker_on else None
+        _sub_email   = session.get("subscriber_email", "")
+        _sub_symbols = set(db.get_subscriber_symbols(_sub_email))
+        positions    = [p for p in (broker_mod.get_positions() if broker_on else [])
+                        if p["symbol"] in _sub_symbols]
+        acct         = broker_mod.get_account() if broker_on else None
 
         # -- ticker tape stocks
         ticker_stocks = [all_db[sym] for sym in watchlist if sym in all_db]
@@ -2224,9 +2245,10 @@ def create_app() -> Flask:
         else:
             positions_html = ""
 
-        # -- open orders + auto-execute panel (broker only)
+        # -- open orders (filtered to this subscriber's orders)
         if broker_on:
-            _open_orders = broker_mod.get_orders("open")
+            _sub_order_ids = set(db.get_subscriber_order_ids(_sub_email))
+            _open_orders = [o for o in broker_mod.get_orders("open") if o["id"] in _sub_order_ids]
             _ae_raw2 = db.get_kv("auto_execute_settings")
             try:
                 _ae_cfg2 = _json.loads(_ae_raw2) if _ae_raw2 else {}
