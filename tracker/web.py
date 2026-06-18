@@ -1787,6 +1787,42 @@ def create_app() -> Flask:
             return Response(_json.dumps({"ok": False, "error": str(e)}),
                             status=500, mimetype="application/json")
 
+    @_app.route("/option-quote")
+    def option_quote():
+        """Return bid/ask for one option contract. Params: sym, expiry, strike, type."""
+        underlying = request.args.get("sym", "").upper().strip()
+        expiry     = request.args.get("expiry", "").strip()
+        strike     = float(request.args.get("strike", 0) or 0)
+        opt_type   = request.args.get("type", "CALL").upper()
+        if not underlying or not expiry or strike <= 0:
+            return Response(_json.dumps({"ok": False, "error": "sym, expiry and strike are required"}),
+                            status=400, mimetype="application/json")
+        result = broker_mod.get_option_quote(underlying, expiry, strike, opt_type)
+        return Response(_json.dumps(result), mimetype="application/json")
+
+    @_app.route("/trade/option", methods=["POST"])
+    def trade_option():
+        """Submit a BUY day limit order for an option contract.
+        Body: {underlying, expiry, strike, opt_type, qty, limit_price}"""
+        try:
+            body        = request.get_json(force=True) or {}
+            underlying  = str(body.get("underlying", "")).upper().strip()
+            expiry      = str(body.get("expiry", "")).strip()
+            strike      = float(body.get("strike", 0) or 0)
+            opt_type    = str(body.get("opt_type", "CALL")).upper()
+            qty         = int(body.get("qty", 0) or 0)
+            limit_price = float(body.get("limit_price", 0) or 0)
+            if not underlying or not expiry or strike <= 0 or qty <= 0 or limit_price <= 0:
+                return Response(_json.dumps({"ok": False, "error": "Missing or invalid params"}),
+                                status=400, mimetype="application/json")
+            result = broker_mod.place_option_limit_order(
+                underlying, expiry, strike, opt_type, qty, limit_price)
+            return Response(_json.dumps(result),
+                            status=200 if result["ok"] else 400, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
     @_app.route("/api/orders")
     def api_orders():
         """Return open Alpaca orders as JSON."""
@@ -3409,16 +3445,17 @@ def create_app() -> Flask:
       <button class="trade-type-tab" id="ttLimit" onclick="setOrderType('limit')">Limit</button>
       <button class="trade-type-tab" id="ttStopLimit" onclick="setOrderType('stop-limit')">Stop-Limit</button>
       <button class="trade-type-tab" id="ttTrailing" onclick="setOrderType('trailing')">Trail</button>
+      <button class="trade-type-tab" id="ttOption" onclick="setOrderType('option')">Option</button>
     </div>
     <div class="trade-field">
       <label>Symbol</label>
       <input type="text" id="tradeSym" readonly>
     </div>
-    <div class="trade-field">
+    <div class="trade-field" id="tradePriceRow">
       <label>Current Price</label>
       <input type="text" id="tradePrice" readonly>
     </div>
-    <div class="trade-field">
+    <div class="trade-field" id="tradeQtyRow">
       <label>Quantity (shares)</label>
       <input type="number" id="tradeQty" min="0.001" step="0.001" value="1">
     </div>
@@ -3439,6 +3476,32 @@ def create_app() -> Flask:
       <div class="trade-field">
         <label>Trail $ (e.g. 1.50)</label>
         <input type="number" id="tradeTrailAmt" min="0.01" step="0.01" placeholder="e.g. 1.50">
+      </div>
+    </div>
+    <div id="tradeOptionFields" style="display:none">
+      <div class="trade-field">
+        <label>Expiry (YYYY-MM-DD)</label>
+        <input type="date" id="optExpiry" style="width:100%;padding:8px 10px;border:2px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font-size:14px">
+      </div>
+      <div class="trade-field">
+        <label>Strike Price ($)</label>
+        <input type="number" id="optStrike" min="0.01" step="0.5" placeholder="e.g. 850">
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="trade-type-tab active" id="optTypeCall" onclick="setOptType('CALL')" style="flex:1">CALL</button>
+        <button class="trade-type-tab" id="optTypePut" onclick="setOptType('PUT')" style="flex:1">PUT</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <button onclick="fetchOptionAsk()" style="padding:7px 14px;background:#3b82f6;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Fetch Ask</button>
+        <span id="optAskLabel" style="font-size:12px;color:#94a3b8"></span>
+      </div>
+      <div class="trade-field">
+        <label>Limit Price (per contract, $)</label>
+        <input type="number" id="optLimitPrice" min="0.01" step="0.01" placeholder="0.00">
+      </div>
+      <div class="trade-field">
+        <label>Contracts</label>
+        <input type="number" id="optQty" min="1" step="1" value="1">
       </div>
     </div>
     <div class="trade-actions">
@@ -3657,11 +3720,12 @@ window.flowSwitch = function(tab) {{
 // ── Trade modal ───────────────────────────────────────────────────────────
 var _tradeSide = 'BUY';
 var _orderType = 'market';
+var _optType   = 'CALL';
 var _isPaper = {'true' if broker_paper else 'false'};
 
 window.setOrderType = function(ot) {{
   _orderType = ot;
-  ['market','limit','stop-limit','trailing'].forEach(function(t) {{
+  ['market','limit','stop-limit','trailing','option'].forEach(function(t) {{
     var id = 'tt' + t.split('-').map(function(w){{return w.charAt(0).toUpperCase()+w.slice(1);}}).join('');
     var el = document.getElementById(id);
     if(el) el.className = 'trade-type-tab' + (t === ot ? ' active' : '');
@@ -3669,9 +3733,55 @@ window.setOrderType = function(ot) {{
   var lf = document.getElementById('tradeLimitField');
   var sf = document.getElementById('tradeStopField');
   var tr = document.getElementById('tradeTrailRow');
-  if(lf) lf.style.display = (ot === 'limit' || ot === 'stop-limit') ? 'block' : 'none';
-  if(sf) sf.style.display = (ot === 'stop-limit') ? 'block' : 'none';
-  if(tr) tr.className = 'trade-trail-row' + (ot === 'trailing' ? ' show' : '');
+  var of = document.getElementById('tradeOptionFields');
+  var qf = document.getElementById('tradeQtyRow');
+  var pf = document.getElementById('tradePriceRow');
+  var isOpt = (ot === 'option');
+  if(lf) lf.style.display = (!isOpt && (ot === 'limit' || ot === 'stop-limit')) ? 'block' : 'none';
+  if(sf) sf.style.display = (!isOpt && ot === 'stop-limit') ? 'block' : 'none';
+  if(tr) tr.className = 'trade-trail-row' + (!isOpt && ot === 'trailing' ? ' show' : '');
+  if(of) of.style.display = isOpt ? 'block' : 'none';
+  if(qf) qf.style.display = isOpt ? 'none' : 'block';
+  if(pf) pf.style.display = isOpt ? 'none' : 'block';
+}};
+
+window.setOptType = function(t) {{
+  _optType = t;
+  var cc = document.getElementById('optTypeCall');
+  var cp = document.getElementById('optTypePut');
+  if(cc) cc.className = 'trade-type-tab' + (t === 'CALL' ? ' active' : '');
+  if(cp) cp.className = 'trade-type-tab' + (t === 'PUT'  ? ' active' : '');
+}};
+
+window.fetchOptionAsk = function() {{
+  var sym    = document.getElementById('tradeSym').value;
+  var expiry = document.getElementById('optExpiry').value;
+  var strike = document.getElementById('optStrike').value;
+  var label  = document.getElementById('optAskLabel');
+  if (!sym || !expiry || !strike) {{
+    label.style.color = '#ef4444';
+    label.textContent = 'Fill symbol, expiry and strike first';
+    return;
+  }}
+  label.style.color = '#94a3b8';
+  label.textContent = 'Fetching…';
+  fetch('/option-quote?sym=' + encodeURIComponent(sym) +
+        '&expiry=' + encodeURIComponent(expiry) +
+        '&strike=' + encodeURIComponent(strike) +
+        '&type='   + encodeURIComponent(_optType))
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      if (d.ok) {{
+        var suggested = Math.max(0.01, parseFloat((d.ask - 1).toFixed(2)));
+        document.getElementById('optLimitPrice').value = suggested.toFixed(2);
+        label.style.color = '#10b981';
+        label.textContent = 'bid $' + d.bid.toFixed(2) + ' / ask $' + d.ask.toFixed(2) + ' → limit $' + suggested.toFixed(2);
+      }} else {{
+        label.style.color = '#ef4444';
+        label.textContent = 'Error: ' + d.error;
+      }}
+    }})
+    .catch(function() {{ label.style.color = '#ef4444'; label.textContent = 'Network error'; }});
 }};
 
 window.openTradeModal = function(sym, price, side) {{
@@ -3733,6 +3843,18 @@ window.submitTrade = function() {{
     endpoint = '/trade/trailing-stop';
     if (tpct > 0) payload.trail_percent = tpct;
     else           payload.trail_price  = tamt;
+  }} else if (_orderType === 'option') {{
+    var oExpiry = document.getElementById('optExpiry').value;
+    var oStrike = parseFloat(document.getElementById('optStrike').value) || 0;
+    var oLp     = parseFloat(document.getElementById('optLimitPrice').value) || 0;
+    var oQty    = parseInt(document.getElementById('optQty').value) || 0;
+    if (!oExpiry || oStrike <= 0 || oLp <= 0 || oQty <= 0) {{
+      res.style.color = '#ef4444';
+      res.textContent = 'Fill expiry, strike, contracts and limit price (use Fetch Ask first).';
+      return;
+    }}
+    endpoint = '/trade/option';
+    payload = {{ underlying: sym, expiry: oExpiry, strike: oStrike, opt_type: _optType, qty: oQty, limit_price: oLp }};
   }}
 
   btn.disabled = true;
@@ -3748,8 +3870,12 @@ window.submitTrade = function() {{
     btn.disabled = false;
     if (d.ok) {{
       res.style.color = '#10b981';
-      var typeLabel = d.type ? ' [' + d.type + ']' : '';
-      res.textContent = (d.paper ? '[PAPER] ' : '') + _tradeSide + ' ' + d.qty + ' ' + d.symbol + typeLabel + ' — ' + d.status;
+      if (d.type === 'option_limit') {{
+        res.textContent = (d.paper ? '[PAPER] ' : '') + 'BUY ' + d.qty + 'x ' + d.symbol + ' limit $' + d.limit_price.toFixed(2) + ' — ' + d.status;
+      }} else {{
+        var typeLabel = d.type ? ' [' + d.type + ']' : '';
+        res.textContent = (d.paper ? '[PAPER] ' : '') + _tradeSide + ' ' + d.qty + ' ' + d.symbol + typeLabel + ' — ' + d.status;
+      }}
       loadOpenOrders();
     }} else {{
       res.style.color = '#ef4444';

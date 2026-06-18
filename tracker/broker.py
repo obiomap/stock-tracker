@@ -10,6 +10,7 @@ WARNING: setting ALPACA_PAPER=false submits real orders with real money.
 """
 
 import os
+from datetime import datetime
 from typing import Optional
 
 
@@ -308,3 +309,83 @@ def start_trade_stream() -> None:
             print(f"[broker] trade stream error: {e}", flush=True)
 
     threading.Thread(target=_run, daemon=True).start()
+
+
+# ── Options trading ────────────────────────────────────────────────────────────
+
+def _build_occ_symbol(underlying: str, expiry: str, strike: float, opt_type: str) -> str:
+    """Return OCC option symbol, e.g. NVDA260626C00850000."""
+    dt = datetime.strptime(expiry, "%Y-%m-%d")
+    type_char = "C" if opt_type.upper() == "CALL" else "P"
+    strike_int = int(round(strike * 1000))
+    return f"{underlying.upper()}{dt.strftime('%y%m%d')}{type_char}{strike_int:08d}"
+
+
+def get_option_quote(underlying: str, expiry: str, strike: float, opt_type: str) -> dict:
+    """Fetch bid/ask for an option contract via yfinance. Returns {ok, bid, ask, last, symbol}."""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(underlying)
+        chain = ticker.option_chain(expiry)
+        df = chain.calls if opt_type.upper() == "CALL" else chain.puts
+        exact = df[df["strike"] == float(strike)]
+        row = exact if not exact.empty else df.iloc[(df["strike"] - float(strike)).abs().argsort()[:1]]
+        if row.empty:
+            return {"ok": False, "error": "No contract found for that strike"}
+        r = row.iloc[0]
+        return {
+            "ok":     True,
+            "bid":    float(r.get("bid", 0) or 0),
+            "ask":    float(r.get("ask", 0) or 0),
+            "last":   float(r.get("lastPrice", 0) or 0),
+            "symbol": _build_occ_symbol(underlying, expiry, strike, opt_type),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def place_option_limit_order(underlying: str, expiry: str, strike: float,
+                              opt_type: str, qty: int, limit_price: float) -> dict:
+    """
+    Buy an option contract at a DAY limit price.
+    underlying: stock ticker (e.g. 'NVDA')
+    expiry: 'YYYY-MM-DD'
+    strike: strike price (e.g. 850.0)
+    opt_type: 'CALL' or 'PUT'
+    qty: number of contracts
+    limit_price: per-contract premium limit
+    """
+    if not is_configured():
+        return {"ok": False, "error": "Alpaca credentials not configured"}
+    if qty <= 0:
+        return {"ok": False, "error": "Quantity must be > 0"}
+    if limit_price <= 0:
+        return {"ok": False, "error": "Limit price must be > 0"}
+    try:
+        occ_sym = _build_occ_symbol(underlying, expiry, strike, opt_type)
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        req = LimitOrderRequest(
+            symbol=occ_sym,
+            qty=qty,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY,
+            limit_price=limit_price,
+        )
+        order = _client().submit_order(req)
+        return {
+            "ok":          True,
+            "id":          str(order.id),
+            "status":      str(order.status),
+            "symbol":      occ_sym,
+            "underlying":  underlying,
+            "expiry":      expiry,
+            "strike":      strike,
+            "opt_type":    opt_type.upper(),
+            "qty":         int(qty),
+            "limit_price": limit_price,
+            "paper":       is_paper(),
+            "type":        "option_limit",
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
