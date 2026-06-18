@@ -2155,8 +2155,10 @@ def create_app() -> Flask:
   <div class="nav-links">
     <a href="#watchlist">&#x1F4CA; Live Prices</a>
     <a href="#spx-pulse">&#x1F4C8; SPX Pulse</a>
+    {'<a href="#positions">&#x1F4BC; Positions</a>' if broker_on else ''}
     <a href="#flow">&#x1F30A; Flow</a>
     <a href="#options">Options</a>
+    <a href="#oi-levels">OI Levels</a>
     <a href="/learn">Knowledge Base</a>
     <a href="#subscribe" class="nav-cta">Get Alerts</a>
   </div>
