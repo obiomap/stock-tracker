@@ -824,13 +824,15 @@ def _rule_signals(ind_data: dict, stock_snap: dict,
 
 def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
                          days_to_earnings: Optional[int],
-                         market_regime: float = 0.0) -> dict:
+                         market_regime: float = 0.0,
+                         vix: float = 0.0) -> dict:
     """
     Generate BULLISH / NEUTRAL / BEARISH prediction with confidence.
     Blends rule-based signals (35%) with multi-timeframe ML ensemble (65%).
 
-    market_regime: +1.0 = broad bull (SPY above MA20),
-                   -1.0 = broad bear (SPY below MA20), 0 = neutral/unknown.
+    market_regime: ±2.0 = strong bull/bear (SPY above/below both MA20+MA50),
+                   ±1.0 = bull/bear (SPY above/below MA20), 0 = neutral.
+    vix: current CBOE VIX level — elevated VIX reduces confidence (noisy market).
 
     high_confidence=True when all 3 timeframe models agree at ≥70% probability
     AND the symbol's historical accuracy (if ≥5 scored predictions) is ≥50%.
@@ -857,7 +859,7 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
     else:
         combined_prob = (weighted_score + 1) / 2
 
-    # Market regime nudge (capped ±5% so regime alone never flips a signal)
+    # Market regime nudge: ±5% per unit — ±1 gives 5%, ±2 (strong) gives 10%
     if market_regime != 0.0:
         combined_prob = float(np.clip(combined_prob + market_regime * 0.05, 0.0, 1.0))
 
@@ -873,6 +875,12 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
     # Confluence penalty: split indicators → cap confidence
     if confluence < 0.3 and total_weight > 0:
         confidence *= 0.7
+
+    # VIX-based confidence penalty: elevated VIX = noisier market, less reliable signals
+    if vix >= 35:
+        confidence *= 0.82
+    elif vix >= 25:
+        confidence *= 0.91
 
     # Per-symbol historical accuracy: boost or penalise confidence
     sym_acc = get_symbol_historical_accuracy(symbol)
@@ -901,6 +909,7 @@ def generate_prediction(symbol: str, ind_data: dict, stock_snap: dict,
         "n_signals":        len(signals),
         "total_weight":     total_weight,
         "market_regime":    market_regime,
+        "vix":              vix,
         "high_confidence":  high_confidence,
         "multi_timeframe":  multi is not None and multi.get("multi_timeframe", False),
         "prob_3d":          multi["prob_3d"]   if multi else None,

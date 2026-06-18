@@ -31,6 +31,63 @@ from tracker import sweeps as sweeps_mod
 
 console = Console()
 
+
+# ── SPX / market-context helper ───────────────────────────────────────────────
+def _compute_market_context(spy_hist, vix_price: float, spy_price: float,
+                             spy_change: float) -> dict:
+    """
+    5-level market regime from SPY MA20/MA50 + VIX.
+    regime_score: ±2.0 (strong) or ±1.0 (normal) or 0.0 (neutral).
+    """
+    ma20 = ma50 = 0.0
+    try:
+        if spy_hist is not None and not spy_hist.empty:
+            closes = spy_hist["Close"].dropna()
+            if len(closes) >= 20:
+                ma20 = float(closes.tail(20).mean())
+            if len(closes) >= 50:
+                ma50 = float(closes.tail(50).mean())
+    except Exception:
+        pass
+
+    regime_score, regime_label = 0.0, "neutral"
+    if spy_price and ma20:
+        d20 = (spy_price - ma20) / ma20
+        d50 = ((spy_price - ma50) / ma50) if ma50 else 0.0
+        if d20 > 0.01:
+            if d50 > 0.02:
+                regime_score, regime_label = 2.0, "strong bull"
+            else:
+                regime_score, regime_label = 1.0, "bull"
+        elif d20 < -0.01:
+            if d50 < -0.02:
+                regime_score, regime_label = -2.0, "strong bear"
+            else:
+                regime_score, regime_label = -1.0, "bear"
+
+    if vix_price >= 35:
+        vix_label = "extreme fear"
+    elif vix_price >= 25:
+        vix_label = "elevated"
+    elif vix_price >= 18:
+        vix_label = "normal"
+    elif vix_price > 0:
+        vix_label = "low"
+    else:
+        vix_label = "unknown"
+
+    return {
+        "regime_score":  regime_score,
+        "regime_label":  regime_label,
+        "vix":           round(vix_price, 2),
+        "vix_label":     vix_label,
+        "spy_price":     spy_price,
+        "spy_change":    spy_change,
+        "spy_ma20":      round(ma20, 2),
+        "spy_ma50":      round(ma50, 2),
+    }
+
+
 # ── shared state ──────────────────────────────────────────────────────────────
 _state: dict = {
     "stocks": [],
@@ -40,6 +97,7 @@ _state: dict = {
     "last_refresh": None,
     "refreshing": False,
     "market_open": False,
+    "market_context": {},
 }
 
 _last_trained: float = 0.0  # epoch timestamp of last model training run
@@ -83,25 +141,24 @@ def refresh_all(config: dict) -> None:
         snaps = fetcher.fetch_multiple_snapshots(watchlist)
         print(f"[refresh] snapshots done — {len(snaps)} returned", flush=True)
 
+        # Pre-fetch SPY history + VIX for market context (cached on repeat calls)
+        _spy_hist  = fetcher.fetch_history("SPY", period="2y")
+        _vix_snap  = fetcher.fetch_ticker_snapshot("^VIX")
+        _vix_price = float((_vix_snap or {}).get("price") or 0.0)
+        _spy_snap  = snaps.get("SPY") or {}
+        _spy_price = float(_spy_snap.get("price") or 0.0)
+        _spy_chg   = float(_spy_snap.get("change_pct") or 0.0)
+
         stocks_out = []
         predictions_out = {}
         hist_data  = {}
         all_hists  = {}   # collected for ML training
         earnings_map = {e["symbol"]: e["days_until"] for e in _state["earnings"]}
 
-        # Compute market regime once per refresh using SPY snapshot
-        # +1 = SPY above MA20 (bull), -1 = below (bear), 0 = unknown
-        def _market_regime(snaps_dict: dict) -> float:
-            spy_snap = snaps_dict.get("SPY", {})
-            price    = spy_snap.get("price") or 0
-            ma20     = spy_snap.get("ma20") or 0
-            if price and ma20:
-                diff_pct = (price - ma20) / ma20
-                if diff_pct >  0.01: return  1.0
-                if diff_pct < -0.01: return -1.0
-            return 0.0
-
-        market_regime = _market_regime(snaps)
+        market_context = _compute_market_context(
+            _spy_hist, _vix_price, _spy_price, _spy_chg
+        )
+        market_regime = market_context["regime_score"]
 
         for _i, sym in enumerate(watchlist):
             if _i > 0 and _i % 50 == 0:
@@ -122,7 +179,9 @@ def refresh_all(config: dict) -> None:
                 ind_data = ind.get_latest_indicators(hist)
                 days_to_earn = earnings_map.get(sym)
                 prediction = pred_mod.generate_prediction(
-                    sym, ind_data, snap, days_to_earn, market_regime=market_regime
+                    sym, ind_data, snap, days_to_earn,
+                    market_regime=market_regime,
+                    vix=market_context.get("vix") or 0.0
                 )
                 predictions_out[sym] = prediction
 
@@ -164,8 +223,43 @@ def refresh_all(config: dict) -> None:
             except Exception as _e:
                 print(f"[refresh] {sym}: exception — {_e}")
 
+        # ── Watchlist breadth: % of equity stocks above MA50 ──────────────────
+        _eq = [s for s in stocks_out
+               if not sec_mod.is_crypto(s["symbol"])
+               and s.get("price") and s.get("ma50")]
+        _breadth_above = sum(1 for s in _eq if s["price"] > s["ma50"])
+        _breadth_total = len(_eq)
+        _breadth_pct   = round(_breadth_above / _breadth_total * 100, 1) if _breadth_total else 0.0
+
+        # ── Sector relative strength vs SPY today ─────────────────────────────
+        _sect_chgs: dict[str, list] = {}
+        for _s in stocks_out:
+            if not sec_mod.is_crypto(_s["symbol"]) and _s.get("change_pct") is not None:
+                _sect = _s.get("sector") or "General"
+                _sect_chgs.setdefault(_sect, []).append(_s["change_pct"])
+        _sector_strength = {
+            sect: round(sum(chgs) / len(chgs) - market_context.get("spy_change", 0.0), 2)
+            for sect, chgs in _sect_chgs.items() if chgs
+        }
+
+        market_context.update({
+            "breadth_pct":     _breadth_pct,
+            "breadth_above":   _breadth_above,
+            "breadth_total":   _breadth_total,
+            "sector_strength": _sector_strength,
+        })
+        _state["market_context"] = market_context
+        try:
+            import json as _mcjson
+            db.set_kv("market_context", _mcjson.dumps(market_context))
+        except Exception:
+            pass
+
         earnings_list = earn_mod.refresh_earnings_calendar(watchlist, hist_data)
-        new_alerts = alert_mod.check_and_fire_alerts(stocks_out, earnings_list, predictions_out, config, market_regime=market_regime)
+        new_alerts = alert_mod.check_and_fire_alerts(
+            stocks_out, earnings_list, predictions_out, config,
+            market_regime=market_regime, market_context=market_context
+        )
 
         # ── Prediction accuracy tracking ──────────────────────────────────────
         # Log today's predictions and score any that are 5+ trading days old
@@ -331,16 +425,64 @@ def _refresh_sweeps(stocks: list[dict], config: dict) -> None:
 
 
 # ── dashboard renderers ───────────────────────────────────────────────────────
+def _sector_strength_summary(sector_strength: dict) -> str:
+    if not sector_strength:
+        return ""
+    ranked = sorted(sector_strength.items(), key=lambda x: x[1], reverse=True)
+    top = [(s, v) for s, v in ranked[:2] if v > 0]
+    bot = [(s, v) for s, v in ranked[-2:] if v < 0]
+    parts = []
+    for s, v in top:
+        short = s.split(" & ")[0].split("/")[0][:12]
+        parts.append(f"[green]{short} +{v:.1f}%[/green]")
+    for s, v in bot:
+        short = s.split(" & ")[0].split("/")[0][:12]
+        parts.append(f"[red]{short} {v:.1f}%[/red]")
+    return "Sectors: " + "  ".join(parts) if parts else ""
+
+
 def _header_panel() -> Panel:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     status = "[green]OPEN[/green]" if _state["market_open"] else "[red]CLOSED[/red]"
     last = _state["last_refresh"].strftime("%H:%M:%S") if _state["last_refresh"] else "never"
     spin = "[yellow]...[/yellow]" if _state["refreshing"] else ""
+
+    mctx         = _state.get("market_context") or {}
+    regime_label = mctx.get("regime_label", "")
+    vix          = mctx.get("vix") or 0.0
+    vix_label    = mctx.get("vix_label", "")
+    breadth_pct  = mctx.get("breadth_pct", 0.0)
+    breadth_tot  = mctx.get("breadth_total", 0)
+
+    _REGIME_COLOR = {
+        "strong bull": "bright_green", "bull": "green",
+        "neutral": "yellow",
+        "bear": "red", "strong bear": "bright_red",
+    }
+    _VIX_COLOR = ("bright_red" if vix >= 35 else "red" if vix >= 25
+                  else "yellow" if vix >= 18 else "green")
+    _BREADTH_COLOR = "green" if breadth_pct >= 60 else "red" if breadth_pct < 40 else "yellow"
+
     txt = Text.assemble(
         ("  STOCK TRACKER  ", "bold white on blue"),
         f"   {now}   Market: ", status,
-        f"   Last update: {last} ", spin
+        f"   Last update: {last} ", spin,
     )
+    if regime_label:
+        txt.append("\n  SPX: ", "dim white")
+        txt.append(regime_label.upper(), f"bold {_REGIME_COLOR.get(regime_label, 'white')}")
+        txt.append("   VIX: ", "dim white")
+        vix_str = f"{vix:.1f} ({vix_label})" if vix else "—"
+        txt.append(vix_str, f"bold {_VIX_COLOR}")
+        if breadth_tot:
+            txt.append("   Breadth: ", "dim white")
+            txt.append(f"{breadth_pct:.0f}% above MA50 ({breadth_tot} stocks)",
+                       f"bold {_BREADTH_COLOR}")
+
+        sect_str = _sector_strength_summary(mctx.get("sector_strength") or {})
+        if sect_str:
+            txt.append(f"\n  {sect_str}", "dim white")
+
     return Panel(txt, style="blue")
 
 
@@ -486,7 +628,7 @@ def _alerts_panel() -> Panel:
 def _build_layout() -> Layout:
     layout = Layout()
     layout.split_column(
-        Layout(name="header", size=3),
+        Layout(name="header", size=6),
         Layout(name="body"),
         Layout(name="alerts", size=10),
     )

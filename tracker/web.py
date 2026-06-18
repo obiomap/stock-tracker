@@ -602,6 +602,29 @@ body{
 .wl-na{color:rgba(255,255,255,.22)}
 @media(max-width:580px){.wl-search{width:100%}.wl-controls{flex-direction:column;align-items:flex-start}.wl-ts{margin-left:0}}
 
+/* ── SPX MARKET PULSE ── */
+.spx-section{margin-bottom:40px}
+.spx-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:16px}
+.spx-card{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+          border-radius:12px;padding:16px 20px}
+.spx-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+           color:rgba(255,255,255,.38);margin-bottom:6px}
+.spx-val{font-size:22px;font-weight:800;line-height:1.1}
+.spx-sub{font-size:12px;color:rgba(255,255,255,.45);margin-top:3px}
+.spx-bull{color:#10b981}.spx-sbull{color:#34d399}
+.spx-bear{color:#ef4444}.spx-sbear{color:#f87171}
+.spx-neut{color:#94a3b8}
+.spx-breadth-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);
+                 margin-top:8px;overflow:hidden}
+.spx-breadth-fill{height:100%;border-radius:3px;transition:width .4s ease}
+.spx-sectors{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.spx-sect-row{display:flex;justify-content:space-between;align-items:center;
+              font-size:12px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.spx-sect-row:last-child{border-bottom:none}
+.spx-sect-name{color:rgba(255,255,255,.7);white-space:nowrap;overflow:hidden;
+               text-overflow:ellipsis;max-width:130px}
+.spx-sect-chg{font-weight:700;font-size:12px;white-space:nowrap}
+
 /* ── FLOW INTELLIGENCE (sweeps / dark pool) ── */
 .flow-section{margin-bottom:40px}
 .flow-tabs{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -1247,6 +1270,106 @@ def create_app() -> Flask:
         # upcoming earnings for What to Watch section
         upcoming_earnings_all = db.get_upcoming_earnings()
 
+        # -- SPX Market Pulse from persisted context
+        import json as _mcjson
+        _mc_raw = db.get_kv("market_context")
+        _mc = {}
+        try:
+            if _mc_raw:
+                _mc = _mcjson.loads(_mc_raw)
+        except Exception:
+            pass
+
+        _regime_label = _mc.get("regime_label", "")
+        _vix          = _mc.get("vix") or 0.0
+        _vix_label    = _mc.get("vix_label", "")
+        _breadth_pct  = _mc.get("breadth_pct") or 0.0
+        _breadth_abv  = _mc.get("breadth_above") or 0
+        _breadth_tot  = _mc.get("breadth_total") or 0
+        _spy_chg_pct  = _mc.get("spy_change") or 0.0
+        _sect_str     = _mc.get("sector_strength") or {}
+
+        _regime_css = {
+            "strong bull": "spx-sbull", "bull": "spx-bull",
+            "neutral": "spx-neut",
+            "bear": "spx-bear", "strong bear": "spx-sbear",
+        }.get(_regime_label, "spx-neut")
+        _vix_css = ("spx-sbear" if _vix >= 35 else "spx-bear" if _vix >= 25
+                    else "spx-neut" if _vix >= 18 else "spx-bull")
+        _breadth_css = ("spx-bull" if _breadth_pct >= 60
+                        else "spx-bear" if _breadth_pct < 40 else "spx-neut")
+        _breadth_fill_color = ("#10b981" if _breadth_pct >= 60
+                                else "#ef4444" if _breadth_pct < 40 else "#f59e0b")
+        _spy_chg_css = "spx-bull" if _spy_chg_pct >= 0 else "spx-bear"
+
+        # sector strength: top 3 leading, bottom 3 lagging
+        _sect_ranked = sorted(_sect_str.items(), key=lambda x: x[1], reverse=True) if _sect_str else []
+        _sect_rows = ""
+        for _sn, _sv in _sect_ranked[:3]:
+            _sc = "#10b981" if _sv > 0 else "#ef4444" if _sv < 0 else "#94a3b8"
+            _sign = "+" if _sv > 0 else ""
+            _sn_short = _sn.split(" & ")[0].split("/")[0][:20]
+            _sect_rows += (f'<div class="spx-sect-row">'
+                           f'<span class="spx-sect-name">{_sn_short}</span>'
+                           f'<span class="spx-sect-chg" style="color:{_sc}">{_sign}{_sv:.1f}%</span>'
+                           f'</div>')
+        for _sn, _sv in _sect_ranked[-3:]:
+            if (_sn, _sv) in _sect_ranked[:3]:
+                continue
+            _sc = "#10b981" if _sv > 0 else "#ef4444" if _sv < 0 else "#94a3b8"
+            _sign = "+" if _sv > 0 else ""
+            _sn_short = _sn.split(" & ")[0].split("/")[0][:20]
+            _sect_rows += (f'<div class="spx-sect-row">'
+                           f'<span class="spx-sect-name">{_sn_short}</span>'
+                           f'<span class="spx-sect-chg" style="color:{_sc}">{_sign}{_sv:.1f}%</span>'
+                           f'</div>')
+        if not _sect_rows:
+            _sect_rows = '<div style="font-size:12px;color:rgba(255,255,255,.28);padding:4px 0">Loading sector data...</div>'
+
+        _regime_display = _regime_label.upper() if _regime_label else "—"
+        _vix_display    = f"{_vix:.1f}" if _vix else "—"
+        _breadth_display = f"{_breadth_pct:.0f}%" if _breadth_tot else "—"
+        _spy_chg_sign   = "+" if _spy_chg_pct >= 0 else ""
+
+        spx_html = f"""
+  <div class="spx-section" id="spx-pulse">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F4C8; SPX Market Pulse</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">Regime &bull; VIX &bull; Breadth &bull; Sector rotation</span>
+    </div>
+    <div class="spx-grid">
+      <div class="spx-card">
+        <div class="spx-label">Market Regime</div>
+        <div class="spx-val {_regime_css}">{_regime_display}</div>
+        <div class="spx-sub">SPY vs MA20 &amp; MA50</div>
+      </div>
+      <div class="spx-card">
+        <div class="spx-label">VIX (Fear Gauge)</div>
+        <div class="spx-val {_vix_css}">{_vix_display}</div>
+        <div class="spx-sub">{_vix_label.title() if _vix_label else "—"}</div>
+      </div>
+      <div class="spx-card">
+        <div class="spx-label">SPY Today</div>
+        <div class="spx-val {_spy_chg_css}">{_spy_chg_sign}{_spy_chg_pct:.2f}%</div>
+        <div class="spx-sub">S&amp;P 500 daily change</div>
+      </div>
+      <div class="spx-card">
+        <div class="spx-label">Watchlist Breadth</div>
+        <div class="spx-val {_breadth_css}">{_breadth_display}</div>
+        <div class="spx-sub">{_breadth_abv} of {_breadth_tot} stocks above MA50</div>
+        <div class="spx-breadth-bar">
+          <div class="spx-breadth-fill"
+               style="width:{_breadth_pct:.0f}%;background:{_breadth_fill_color}"></div>
+        </div>
+      </div>
+      <div class="spx-card" style="grid-column:span 2">
+        <div class="spx-label">Sector Relative Strength vs SPY</div>
+        <div class="spx-sectors">{_sect_rows}</div>
+      </div>
+    </div>
+  </div>
+"""
+
         # market context events
         _month, _day = _now.month, _now.day
         _first = _now.replace(day=1)
@@ -1783,8 +1906,9 @@ def create_app() -> Flask:
   <div class="nav-logo"><span>&#x1F4C8;</span> Stock Tracker</div>
   <div class="nav-links">
     <a href="#watchlist">&#x1F4CA; Live Prices</a>
+    <a href="#spx-pulse">&#x1F4C8; SPX Pulse</a>
     <a href="#flow">&#x1F30A; Flow</a>
-    <a href="#options">&#x1F4C8; Options</a>
+    <a href="#options">Options</a>
     <a href="/learn">Knowledge Base</a>
     <a href="#subscribe" class="nav-cta">Get Alerts</a>
   </div>
@@ -1900,6 +2024,9 @@ def create_app() -> Flask:
       <p>{n_topics} plain-English guides on indicators, patterns, sectors, risk management, options Greeks, trading platforms, and more.</p>
     </div>
   </div>
+
+  <!-- SPX MARKET PULSE -->
+  {spx_html}
 
   <!-- STOCKS OF THE WEEK -->
   <div class="sotw-section">

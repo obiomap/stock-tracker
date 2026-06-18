@@ -136,6 +136,12 @@ def init_db() -> None:
                 is_golden INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            );
         """)
     _migrate_columns()
 
@@ -590,3 +596,19 @@ def get_all_sweeps_today() -> dict:
         "puts":      [r for r in all_rows if r["sweep_type"] == "PUT_SWEEP"],
         "dark_pool": [r for r in all_rows if r["sweep_type"] == "DARK_POOL"],
     }
+
+
+# ── Key-value store ───────────────────────────────────────────────────────────
+
+def set_kv(key: str, value: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store(key, value, updated_at) VALUES(?,?,?)",
+            (key, value, datetime.now().isoformat())
+        )
+
+
+def get_kv(key: str) -> str | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None

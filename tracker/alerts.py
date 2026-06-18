@@ -1033,9 +1033,16 @@ def _tech_context(s: dict, pred: dict, vol_ratio: float) -> tuple[int, str]:
 
 def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                           predictions: dict, config: dict,
-                          market_regime: float = 0.0) -> list[dict]:
+                          market_regime: float = 0.0,
+                          market_context: dict = None) -> list[dict]:
     alert_cfg = config.get("alerts", {})
-    price_thresh  = alert_cfg.get("price_change_threshold", 3.0)
+    _ctx          = market_context or {}
+    vix           = float(_ctx.get("vix") or 0.0)
+    _regime_label = _ctx.get("regime_label") or ("bear" if market_regime < 0 else ("bull" if market_regime > 0 else "neutral"))
+
+    # VIX-scaled thresholds: widen alert gates in high-fear environments to cut noise
+    _vix_mult     = 1.50 if vix >= 35 else (1.25 if vix >= 25 else 1.0)
+    price_thresh  = alert_cfg.get("price_change_threshold", 3.0) * _vix_mult
     rsi_ob        = alert_cfg.get("rsi_overbought", 70)
     rsi_os        = alert_cfg.get("rsi_oversold", 30)
     earn_days     = alert_cfg.get("earnings_alert_days", 3)
@@ -1085,7 +1092,12 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             vol_ok = is_crypto or vol_ratio >= 1.1
             if vol_ok and not db.was_alert_sent_today(alert_type, sym):
                 quality, ctx = _tech_context(s, pred, vol_ratio)
-                regime_tag = " ⚠ bear regime" if market_regime < 0 else ""
+                if _regime_label in ("bear", "strong bear"):
+                    regime_tag = f" ⚠ {_regime_label}"
+                elif _regime_label == "strong bull":
+                    regime_tag = " ↑ strong bull"
+                else:
+                    regime_tag = ""
                 msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | {ctx}"
                 db.log_alert(alert_type, sym, msg, severity)
                 new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
