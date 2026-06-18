@@ -31,6 +31,8 @@ from tracker import sweeps as sweeps_mod
 from tracker import supply_demand as sd_mod
 from tracker import crypto_intel as crypto_mod
 from tracker import ngx_intel as ngx_mod
+from tracker import order_flow as of_mod
+from tracker import broker as broker_mod
 
 console = Console()
 
@@ -320,6 +322,71 @@ def refresh_all(config: dict) -> None:
             print(f"[refresh] ngx_context saved — ngx_stocks={len(_ngx_stocks)} rate={ngx_context['usdngn'].get('rate')} open={ngx_context['mkt_status'].get('is_open')}", flush=True)
         except Exception as _ne:
             print(f"[refresh] ngx_context ERROR: {_ne}", flush=True)
+
+        # ── Order flow signals (intraday 5-min candles, top 15 candidates) ──────
+        # Only during market hours to avoid fetching stale intraday data overnight
+        if _is_market_open():
+            print(f"[refresh] computing order flow signals...", flush=True)
+            _of_candidates = sorted(
+                [s for s in stocks_out
+                 if not sec_mod.is_crypto(s["symbol"])
+                 and s.get("prediction") in ("BULLISH", "BEARISH")
+                 and s.get("prediction_confidence", 0) >= 0.30],
+                key=lambda s: s.get("prediction_confidence", 0), reverse=True
+            )[:15]
+            _of_signals = []
+            for _ofs in _of_candidates:
+                try:
+                    _of_result = of_mod.analyze(_ofs["symbol"])
+                    # Only store if at least one signal is active
+                    _vs = _of_result["volume_spike"]
+                    _so = _of_result["selloff"]
+                    _pr = _of_result["pressure"]
+                    _pv = _of_result["velocity"]
+                    has_signal = (
+                        _vs.get("spike") or _so.get("selloff") or
+                        (_pr.get("label", "neutral") not in ("neutral",)) or
+                        _pv.get("alert")
+                    )
+                    if has_signal:
+                        _of_result["prediction"] = _ofs.get("prediction")
+                        _of_result["confidence"] = _ofs.get("prediction_confidence")
+                        _of_signals.append(_of_result)
+                except Exception as _ofe:
+                    print(f"[order_flow] {_ofs['symbol']} error: {_ofe}", flush=True)
+            try:
+                import json as _ofjson
+                db.set_kv("order_flow_signals", _ofjson.dumps(_of_signals))
+                print(f"[refresh] order_flow saved — {len(_of_signals)} signals", flush=True)
+            except Exception as _ofe2:
+                print(f"[refresh] order_flow ERROR: {_ofe2}", flush=True)
+
+        # ── Auto-execute: submit paper trades for high-confidence signals ─────
+        try:
+            _ae_raw = db.get_kv("auto_execute_settings")
+            if _ae_raw:
+                import json as _aejson
+                _ae_cfg = _aejson.loads(_ae_raw)
+                if _ae_cfg.get("enabled") and broker_mod.is_configured():
+                    _ae_threshold = float(_ae_cfg.get("threshold", 0.85))
+                    _ae_qty       = float(_ae_cfg.get("qty", 1.0))
+                    _ae_fired = 0
+                    for _sym, _pred in predictions_out.items():
+                        if _pred.get("signal") in ("BULLISH", "BEARISH"):
+                            _conf = float(_pred.get("confidence") or 0)
+                            _px   = float(current_prices.get(_sym) or 0)
+                            if _conf >= _ae_threshold and _px > 0:
+                                _ae_r = broker_mod.auto_execute_signal(
+                                    _sym, _pred["signal"], _conf, _px,
+                                    threshold=_ae_threshold, qty=_ae_qty
+                                )
+                                if _ae_r.get("ok"):
+                                    _ae_fired += 1
+                                    print(f"[auto-execute] {_sym} {_pred['signal']} conf={_conf:.0%} → {_ae_r.get('status')}", flush=True)
+                    if _ae_fired:
+                        print(f"[auto-execute] fired {_ae_fired} orders", flush=True)
+        except Exception as _aex:
+            print(f"[auto-execute] ERROR: {_aex}", flush=True)
 
         earnings_list = earn_mod.refresh_earnings_calendar(watchlist, hist_data)
         new_alerts = alert_mod.check_and_fire_alerts(
@@ -1127,6 +1194,14 @@ def serve(host, port, http_port, no_tls):
                 pass
 
     threading.Thread(target=_bg_refresh_loop, daemon=True).start()
+
+    # ── Alpaca trade stream (fills) ───────────────────────────────────────────
+    try:
+        broker_mod.start_trade_stream()
+        if broker_mod.is_configured():
+            print("[broker] trade stream started", flush=True)
+    except Exception as _bse:
+        print(f"[broker] trade stream start error: {_bse}", flush=True)
 
     # ── plain HTTP mode (for ngrok / reverse proxy / cloud) ──────────────────
     if no_tls:

@@ -11,6 +11,7 @@ from . import sectors as sec_mod
 from . import social as social_mod
 from . import supply_demand as sd_mod
 from . import broker as broker_mod
+from . import order_flow as of_mod
 
 # ── CSS color maps ────────────────────────────────────────────────────────────
 
@@ -755,6 +756,61 @@ body{
 .trade-submit-sell{flex:2;padding:10px;border-radius:8px;border:none;
                    background:#ef4444;color:#fff;cursor:pointer;font-size:14px;font-weight:700}
 .trade-result{margin-top:14px;font-size:13px;text-align:center;min-height:20px}
+.trade-type-tabs{display:flex;gap:6px;margin-bottom:16px}
+.trade-type-tab{flex:1;padding:7px 4px;border-radius:7px;border:1px solid rgba(255,255,255,.12);
+                background:transparent;color:rgba(255,255,255,.45);cursor:pointer;
+                font-size:12px;font-weight:600;text-align:center;transition:all .15s}
+.trade-type-tab.active{background:rgba(99,102,241,.25);border-color:rgba(99,102,241,.5);
+                        color:#a5b4fc}
+.trade-field-price{display:none}
+
+/* ── ORDER FLOW SIGNALS ── */
+.of-signal{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
+           border-radius:5px;font-size:11px;font-weight:700;white-space:nowrap}
+.of-spike{background:rgba(251,146,60,.2);color:#fb923c}
+.of-selloff{background:rgba(239,68,68,.2);color:#f87171}
+.of-buy-strong{background:rgba(16,185,129,.25);color:#34d399}
+.of-buy{background:rgba(16,185,129,.12);color:#6ee7b7}
+.of-sell-strong{background:rgba(239,68,68,.25);color:#f87171}
+.of-sell{background:rgba(239,68,68,.12);color:#fca5a5}
+.of-velocity-up{background:rgba(99,102,241,.2);color:#a5b4fc}
+.of-velocity-down{background:rgba(239,68,68,.2);color:#fca5a5}
+.of-neutral{color:rgba(255,255,255,.3);font-size:11px}
+
+/* ── ORDERS TABLE ── */
+.orders-section{margin-bottom:40px}
+.orders-table{width:100%;border-collapse:collapse;font-size:13px}
+.orders-table th{padding:8px 12px;text-align:left;font-size:11px;font-weight:700;
+                 text-transform:uppercase;letter-spacing:.6px;
+                 background:rgba(255,255,255,.04);color:rgba(255,255,255,.38)}
+.orders-table th:not(:first-child){text-align:right}
+.orders-table td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.04)}
+.orders-table td:not(:first-child){text-align:right}
+.orders-table tr:last-child td{border-bottom:none}
+.cancel-btn{padding:3px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.4);
+            background:rgba(239,68,68,.1);color:#f87171;cursor:pointer;font-size:11px;
+            font-weight:600;transition:all .15s}
+.cancel-btn:hover{background:rgba(239,68,68,.25)}
+.order-status-open{color:#fbbf24}
+.order-status-filled{color:#10b981}
+.order-status-other{color:rgba(255,255,255,.38)}
+
+/* ── AUTO-EXECUTE PANEL ── */
+.ae-panel{background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.2);
+          border-radius:10px;padding:16px 20px;margin-top:16px;display:flex;
+          align-items:center;gap:16px;flex-wrap:wrap}
+.ae-toggle{position:relative;display:inline-block;width:42px;height:24px}
+.ae-toggle input{opacity:0;width:0;height:0}
+.ae-slider{position:absolute;cursor:pointer;inset:0;background:rgba(255,255,255,.1);
+           border-radius:24px;transition:.3s}
+.ae-slider:before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;
+                  background:#fff;border-radius:50%;transition:.3s}
+.ae-toggle input:checked+.ae-slider{background:#6366f1}
+.ae-toggle input:checked+.ae-slider:before{transform:translateX(18px)}
+.ae-label{color:rgba(255,255,255,.7);font-size:13px}
+.ae-threshold{padding:5px 10px;border-radius:7px;border:1px solid rgba(255,255,255,.12);
+              background:rgba(255,255,255,.06);color:#e2e8f0;font-size:13px;width:72px}
+.ae-status{font-size:11px;color:rgba(255,255,255,.35);margin-left:auto}
 
 /* ── POSITIONS CARD ── */
 .pos-section{margin-bottom:40px}
@@ -1265,6 +1321,107 @@ def create_app() -> Flask:
         acct = broker_mod.get_account()
         return Response(_json.dumps(acct or {}), mimetype="application/json")
 
+    @_app.route("/trade/limit", methods=["POST"])
+    def trade_limit():
+        """Submit a limit order. Body: {symbol, qty, side, limit_price}."""
+        try:
+            body        = request.get_json(force=True) or {}
+            symbol      = str(body.get("symbol", "")).upper().strip()
+            qty         = float(body.get("qty", 0))
+            side        = str(body.get("side", "")).upper()
+            limit_price = float(body.get("limit_price", 0))
+            if not symbol or qty <= 0 or side not in ("BUY", "SELL") or limit_price <= 0:
+                return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
+                                status=400, mimetype="application/json")
+            result = broker_mod.place_limit_order(symbol, qty, side, limit_price)
+            return Response(_json.dumps(result),
+                            status=200 if result["ok"] else 400, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/trade/stop-limit", methods=["POST"])
+    def trade_stop_limit():
+        """Submit a stop-limit order. Body: {symbol, qty, side, limit_price, stop_price}."""
+        try:
+            body        = request.get_json(force=True) or {}
+            symbol      = str(body.get("symbol", "")).upper().strip()
+            qty         = float(body.get("qty", 0))
+            side        = str(body.get("side", "")).upper()
+            limit_price = float(body.get("limit_price", 0))
+            stop_price  = float(body.get("stop_price", 0))
+            if not symbol or qty <= 0 or side not in ("BUY", "SELL") or limit_price <= 0 or stop_price <= 0:
+                return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
+                                status=400, mimetype="application/json")
+            result = broker_mod.place_stop_limit_order(symbol, qty, side, limit_price, stop_price)
+            return Response(_json.dumps(result),
+                            status=200 if result["ok"] else 400, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/api/orders")
+    def api_orders():
+        """Return open Alpaca orders as JSON."""
+        status = request.args.get("status", "open")
+        return Response(_json.dumps(broker_mod.get_orders(status)),
+                        mimetype="application/json")
+
+    @_app.route("/cancel-order", methods=["POST"])
+    def cancel_order():
+        """Cancel an Alpaca order by ID. Body: {order_id}."""
+        try:
+            body     = request.get_json(force=True) or {}
+            order_id = str(body.get("order_id", "")).strip()
+            if not order_id:
+                return Response(_json.dumps({"ok": False, "error": "order_id required"}),
+                                status=400, mimetype="application/json")
+            result = broker_mod.cancel_order(order_id)
+            return Response(_json.dumps(result),
+                            status=200 if result["ok"] else 400, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/api/fills")
+    def api_fills():
+        """Return recent trade fill notifications from the Alpaca stream."""
+        return Response(_json.dumps(broker_mod.get_recent_fills()),
+                        mimetype="application/json")
+
+    @_app.route("/api/auto-execute", methods=["GET", "POST"])
+    def api_auto_execute():
+        """GET: return current auto-execute settings. POST: update settings."""
+        if request.method == "GET":
+            raw = db.get_kv("auto_execute_settings")
+            try:
+                settings = _json.loads(raw) if raw else {}
+            except Exception:
+                settings = {}
+            return Response(_json.dumps(settings), mimetype="application/json")
+        try:
+            body      = request.get_json(force=True) or {}
+            enabled   = bool(body.get("enabled", False))
+            threshold = float(body.get("threshold", 0.85))
+            qty       = float(body.get("qty", 1.0))
+            threshold = max(0.50, min(0.99, threshold))
+            qty       = max(0.001, min(100.0, qty))
+            settings  = {"enabled": enabled, "threshold": threshold, "qty": qty}
+            db.set_kv("auto_execute_settings", _json.dumps(settings))
+            return Response(_json.dumps({"ok": True, **settings}), mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/api/order-flow")
+    def api_order_flow():
+        """Run live order-flow analysis for a symbol."""
+        sym = request.args.get("sym", "").upper().strip()
+        if not sym:
+            return Response(_json.dumps({"error": "sym required"}),
+                            status=400, mimetype="application/json")
+        return Response(_json.dumps(of_mod.analyze(sym)), mimetype="application/json")
+
     @_app.route("/api/bid-ask/<sym>")
     def api_bid_ask(sym: str):
         """Return live bid/ask spread for a symbol (60 s cache)."""
@@ -1597,6 +1754,81 @@ def create_app() -> Flask:
   </div>"""
         else:
             positions_html = ""
+
+        # -- open orders + auto-execute panel (broker only)
+        if broker_on:
+            _open_orders = broker_mod.get_orders("open")
+            _ae_raw2 = db.get_kv("auto_execute_settings")
+            try:
+                _ae_cfg2 = _json.loads(_ae_raw2) if _ae_raw2 else {}
+            except Exception:
+                _ae_cfg2 = {}
+            _ae_enabled   = bool(_ae_cfg2.get("enabled", False))
+            _ae_threshold = float(_ae_cfg2.get("threshold", 0.85))
+            _ae_qty       = float(_ae_cfg2.get("qty", 1.0))
+
+            _ord_rows = ""
+            for _ord in _open_orders[:20]:
+                _otype = str(_ord.get("type","market")).replace("ORDERTYPE.","").lower()
+                _oside = str(_ord.get("side","")).replace("ORDERSIDE.","")
+                _ostatus = str(_ord.get("status","")).replace("ORDERSTATUS.","").lower()
+                _ostatus_css = ("order-status-open" if "open" in _ostatus or "new" in _ostatus or "accept" in _ostatus
+                                else "order-status-filled" if "fill" in _ostatus
+                                else "order-status-other")
+                _olp = f'${_ord["limit_price"]:.2f}' if _ord.get("limit_price") else "—"
+                _osp = f'${_ord["stop_price"]:.2f}'  if _ord.get("stop_price")  else "—"
+                _oside_css = "color:#34d399" if "BUY" in _oside else "color:#f87171"
+                _ord_rows += (
+                    f'<tr>'
+                    f'<td class="pos-sym">{sec_mod.display_symbol(_ord["symbol"])}</td>'
+                    f'<td style="{_oside_css};font-weight:700">{_oside}</td>'
+                    f'<td style="color:#94a3b8;font-size:12px">{_otype}</td>'
+                    f'<td>{_ord["qty"]:g}</td>'
+                    f'<td>{_olp}</td>'
+                    f'<td>{_osp}</td>'
+                    f'<td class="{_ostatus_css}">{_ostatus}</td>'
+                    f'<td style="color:#475569;font-size:11px">{_ord["created_at"][:10]}</td>'
+                    f'<td><button class="cancel-btn" onclick="cancelOrder(\'{_ord["id"]}\',this)">Cancel</button></td>'
+                    f'</tr>'
+                )
+            if not _ord_rows:
+                _ord_rows = '<tr><td colspan="9" style="text-align:center;padding:20px;color:rgba(255,255,255,.28)">No open orders</td></tr>'
+
+            orders_html = f"""
+  <div class="orders-section" id="orders">
+    <div class="section-head" style="margin-bottom:12px">
+      <h2>&#x1F4CB; Open Orders</h2>
+    </div>
+    <div class="wl-wrap">
+      <table class="orders-table">
+        <thead><tr>
+          <th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th>
+          <th>Limit</th><th>Stop</th><th>Status</th><th>Date</th><th></th>
+        </tr></thead>
+        <tbody id="ordersTableBody">{_ord_rows}</tbody>
+      </table>
+    </div>
+    <div class="ae-panel">
+      <span class="ae-label">&#x1F916; Auto-execute high-confidence signals</span>
+      <label class="ae-toggle">
+        <input type="checkbox" id="aeToggle" {'checked' if _ae_enabled else ''}
+               onchange="aeUpdate()">
+        <span class="ae-slider"></span>
+      </label>
+      <span class="ae-label" style="font-size:12px">Min confidence</span>
+      <input class="ae-threshold" type="number" id="aeThreshold"
+             min="50" max="99" step="1" value="{int(_ae_threshold*100)}"
+             onchange="aeUpdate()" title="Auto-execute if ML confidence ≥ this %">
+      <span class="ae-label" style="font-size:11px">%</span>
+      <span class="ae-label" style="font-size:12px">Qty</span>
+      <input class="ae-threshold" type="number" id="aeQty"
+             min="0.001" max="100" step="0.001" value="{_ae_qty:.3g}"
+             onchange="aeUpdate()" title="Shares per auto-executed order" style="width:64px">
+      <span class="ae-status" id="aeStatus">{'&#x2705; Enabled' if _ae_enabled else '&#x23F9; Disabled'}</span>
+    </div>
+  </div>"""
+        else:
+            orders_html = ""
 
         # -- options OI levels
         _oi_raw = db.get_kv("oi_levels")
@@ -1988,12 +2220,76 @@ def create_app() -> Flask:
             '<th style="text-align:right">Price Chg</th>'
         )
 
+        # -- order flow signals panel (from kv_store, populated during market hours)
+        _of_raw = db.get_kv("order_flow_signals")
+        _of_signals: list[dict] = []
+        if _of_raw:
+            try:
+                _of_signals = _json.loads(_of_raw)
+            except Exception:
+                pass
+
+        def _of_pressure_badge(label: str) -> str:
+            css = {"strong buy": "of-buy-strong", "buy": "of-buy",
+                   "strong sell": "of-sell-strong", "sell": "of-sell"}.get(label, "")
+            if not css:
+                return '<span class="of-neutral">—</span>'
+            return f'<span class="of-signal {css}">{label.upper()}</span>'
+
+        def _of_rows(signals: list[dict]) -> str:
+            if not signals:
+                return '<tr><td colspan="5" class="flow-empty">No active order-flow signals — updates during market hours</td></tr>'
+            rows = ""
+            for s in signals[:20]:
+                sym = s.get("symbol", "")
+                vs  = s.get("volume_spike", {})
+                so  = s.get("selloff", {})
+                pr  = s.get("pressure", {})
+                pv  = s.get("velocity", {})
+                pred = s.get("prediction", "")
+                conf = s.get("confidence") or 0
+
+                spike_html = (f'<span class="of-signal of-spike">&#x26A1; {vs["ratio"]:.1f}x SPIKE</span>'
+                              if vs.get("spike") else '<span class="of-neutral">—</span>')
+                selloff_html = (f'<span class="of-signal of-selloff">&#x1F4C9; SELL-OFF {so["drop_pct"]:.1f}%</span>'
+                                if so.get("selloff") else '<span class="of-neutral">—</span>')
+                pv_html = ""
+                if pv.get("alert"):
+                    css = "of-velocity-up" if pv.get("direction") == "up" else "of-velocity-down"
+                    arrow = "&#x2197;" if pv.get("direction") == "up" else "&#x2198;"
+                    pv_html = f'<span class="of-signal {css}">{arrow} {abs(pv["max_pct"]):.1f}%/5m</span>'
+                else:
+                    pv_html = '<span class="of-neutral">—</span>'
+
+                pred_color = "#34d399" if pred == "BULLISH" else ("#f87171" if pred == "BEARISH" else "#94a3b8")
+                rows += (
+                    f'<tr>'
+                    f'<td class="flow-sym">{sec_mod.display_symbol(sym)}</td>'
+                    f'<td style="text-align:center">{spike_html}</td>'
+                    f'<td style="text-align:center">{selloff_html}</td>'
+                    f'<td style="text-align:center">{_of_pressure_badge(pr.get("label","neutral"))}</td>'
+                    f'<td style="text-align:center">{pv_html}</td>'
+                    f'<td style="text-align:right;color:{pred_color};font-size:11px">'
+                    f'{pred} {conf:.0%}</td>'
+                    f'</tr>'
+                )
+            return rows
+
+        of_col_heads = (
+            '<th>Symbol</th>'
+            '<th style="text-align:center">Vol Spike</th>'
+            '<th style="text-align:center">Sell-off</th>'
+            '<th style="text-align:center">Pressure</th>'
+            '<th style="text-align:center">Velocity</th>'
+            '<th style="text-align:right">ML Signal</th>'
+        )
+
         flow_section_html = f"""
   <div class="flow-section" id="flow">
     <div class="section-head" style="margin-bottom:16px">
       <h2>&#x1F30A; Flow Intelligence</h2>
       <span style="font-size:12px;color:rgba(255,255,255,.35)">
-        Dark pool &bull; Options sweeps &bull; Golden sweeps &bull; refreshes every 5 min
+        Dark pool &bull; Options sweeps &bull; Golden sweeps &bull; Order flow &bull; refreshes every 5 min
       </span>
     </div>
     <div class="flow-tabs">
@@ -2005,6 +2301,10 @@ def create_app() -> Flask:
       </div>
       <div class="flow-tab" id="flowTabDp" onclick="flowSwitch('dp')">
         &#x1F3DB; Dark Pool &mdash; {len(dp_blocks)}
+      </div>
+      <div class="flow-tab" id="flowTabOf" onclick="flowSwitch('of')"
+           style="border-color:rgba(251,146,60,.3)">
+        &#x26A1; Order Flow &mdash; {len(_of_signals)}
       </div>
     </div>
 
@@ -2035,9 +2335,18 @@ def create_app() -> Flask:
       </div>
     </div>
 
+    <div class="flow-panel" id="flowPanelOf">
+      <div class="flow-wrap">
+        <table class="flow-table">
+          <thead><tr>{of_col_heads}</tr></thead>
+          <tbody>{_of_rows(_of_signals)}</tbody>
+        </table>
+      </div>
+    </div>
+
     <p class="flow-disclaimer">
-      &#x26A0;&#xFE0F; Dark pool signals are approximations from public volume data. Options sweep volume/OI ratios
-      identify unusual positioning — not guaranteed institutional activity. Not financial advice.
+      &#x26A0;&#xFE0F; Dark pool signals are approximations from public volume data. Order flow uses 5-min intraday candles —
+      signals update during market hours only. Not financial advice.
     </p>
   </div>
 """
@@ -2379,6 +2688,7 @@ def create_app() -> Flask:
     <a href="#crypto-intel">&#x20BF; Crypto</a>
     <a href="#ngx-intel">&#x1F1F3;&#x1F1EC; NGX</a>
     {'<a href="#positions">&#x1F4BC; Positions</a>' if broker_on else ''}
+    {'<a href="#orders">&#x1F4CB; Orders</a>' if broker_on else ''}
     <a href="#flow">&#x1F30A; Flow</a>
     <a href="#options">Options</a>
     <a href="#oi-levels">OI Levels</a>
@@ -2509,6 +2819,9 @@ def create_app() -> Flask:
 
   <!-- POSITIONS -->
   {positions_html}
+
+  <!-- OPEN ORDERS -->
+  {orders_html}
 
   <!-- STOCKS OF THE WEEK -->
   <div class="sotw-section">
@@ -2658,6 +2971,11 @@ def create_app() -> Flask:
   <div class="trade-box">
     <h3 id="tradeTitle">Place Order</h3>
     <span id="tradePaperBadge"></span>
+    <div class="trade-type-tabs">
+      <button class="trade-type-tab active" id="ttMarket" onclick="setOrderType('market')">Market</button>
+      <button class="trade-type-tab" id="ttLimit" onclick="setOrderType('limit')">Limit</button>
+      <button class="trade-type-tab" id="ttStopLimit" onclick="setOrderType('stop-limit')">Stop-Limit</button>
+    </div>
     <div class="trade-field">
       <label>Symbol</label>
       <input type="text" id="tradeSym" readonly>
@@ -2669,6 +2987,14 @@ def create_app() -> Flask:
     <div class="trade-field">
       <label>Quantity (shares)</label>
       <input type="number" id="tradeQty" min="0.001" step="0.001" value="1">
+    </div>
+    <div class="trade-field trade-field-price" id="tradeLimitField">
+      <label>Limit Price ($)</label>
+      <input type="number" id="tradeLimitPrice" min="0.01" step="0.01" placeholder="0.00">
+    </div>
+    <div class="trade-field trade-field-price" id="tradeStopField">
+      <label>Stop Price ($)</label>
+      <input type="number" id="tradeStopPrice" min="0.01" step="0.01" placeholder="0.00">
     </div>
     <div class="trade-actions">
       <button class="trade-cancel" onclick="closeTradeModal()">Cancel</button>
@@ -2871,19 +3197,38 @@ window.flowSwitch = function(tab) {{
   document.getElementById('flowPanelGolden').classList.toggle('active', tab === 'golden');
   document.getElementById('flowPanelSweep').classList.toggle('active',  tab === 'sweep');
   document.getElementById('flowPanelDp').classList.toggle('active',     tab === 'dp');
+  var pOf = document.getElementById('flowPanelOf');
+  if(pOf) pOf.classList.toggle('active', tab === 'of');
   var tg = document.getElementById('flowTabGolden');
   var ts = document.getElementById('flowTabSweep');
   var td = document.getElementById('flowTabDp');
+  var to = document.getElementById('flowTabOf');
   if(tg) tg.className = 'flow-tab' + (tab==='golden' ? ' active-golden' : '');
   if(ts) ts.className = 'flow-tab' + (tab==='sweep'  ? ' active-sweep'  : '');
   if(td) td.className = 'flow-tab' + (tab==='dp'     ? ' active-dp'     : '');
+  if(to) to.className = 'flow-tab' + (tab==='of'     ? ' active'        : '');
 }};
 
 // ── Trade modal ───────────────────────────────────────────────────────────
 var _tradeSide = 'BUY';
+var _orderType = 'market';
 var _isPaper = {'true' if broker_paper else 'false'};
+
+window.setOrderType = function(ot) {{
+  _orderType = ot;
+  ['market','limit','stop-limit'].forEach(function(t) {{
+    var el = document.getElementById('tt' + t.charAt(0).toUpperCase() + t.slice(1).replace('-',''));
+    if(el) el.className = 'trade-type-tab' + (t === ot ? ' active' : '');
+  }});
+  var lf = document.getElementById('tradeLimitField');
+  var sf = document.getElementById('tradeStopField');
+  if(lf) lf.style.display = (ot === 'limit' || ot === 'stop-limit') ? 'block' : 'none';
+  if(sf) sf.style.display = (ot === 'stop-limit') ? 'block' : 'none';
+}};
+
 window.openTradeModal = function(sym, price, side) {{
   _tradeSide = side;
+  setOrderType('market');
   document.getElementById('tradeSym').value = sym;
   document.getElementById('tradePrice').value = price ? '$' + price.toFixed(2) : '—';
   var pb = document.getElementById('tradePaperBadge');
@@ -2895,32 +3240,58 @@ window.openTradeModal = function(sym, price, side) {{
   btn.textContent = side === 'BUY' ? 'Submit Buy Order' : 'Submit Sell Order';
   document.getElementById('tradeResult').textContent = '';
   document.getElementById('tradeQty').value = '1';
+  var lp = document.getElementById('tradeLimitPrice');
+  var sp = document.getElementById('tradeStopPrice');
+  if(lp) lp.value = price ? price.toFixed(2) : '';
+  if(sp) sp.value = price ? (price * 0.99).toFixed(2) : '';
   document.getElementById('tradeOverlay').classList.add('open');
   setTimeout(function(){{ document.getElementById('tradeQty').focus(); }}, 50);
 }};
+
 window.closeTradeModal = function() {{
   document.getElementById('tradeOverlay').classList.remove('open');
 }};
+
 window.submitTrade = function() {{
-  var sym = document.getElementById('tradeSym').value;
-  var qty = parseFloat(document.getElementById('tradeQty').value) || 0;
-  var res = document.getElementById('tradeResult');
+  var sym   = document.getElementById('tradeSym').value;
+  var qty   = parseFloat(document.getElementById('tradeQty').value) || 0;
+  var res   = document.getElementById('tradeResult');
+  var btn   = document.getElementById('tradeSubmitBtn');
   if (qty <= 0) {{ res.style.color = '#ef4444'; res.textContent = 'Enter a valid quantity.'; return; }}
-  var btn = document.getElementById('tradeSubmitBtn');
+
+  var endpoint = '/trade';
+  var payload  = {{symbol: sym, qty: qty, side: _tradeSide}};
+
+  if (_orderType === 'limit') {{
+    var lp = parseFloat(document.getElementById('tradeLimitPrice').value) || 0;
+    if (lp <= 0) {{ res.style.color = '#ef4444'; res.textContent = 'Enter a valid limit price.'; return; }}
+    endpoint = '/trade/limit';
+    payload.limit_price = lp;
+  }} else if (_orderType === 'stop-limit') {{
+    var lp2 = parseFloat(document.getElementById('tradeLimitPrice').value) || 0;
+    var sp  = parseFloat(document.getElementById('tradeStopPrice').value) || 0;
+    if (lp2 <= 0 || sp <= 0) {{ res.style.color = '#ef4444'; res.textContent = 'Enter valid limit and stop prices.'; return; }}
+    endpoint = '/trade/stop-limit';
+    payload.limit_price = lp2;
+    payload.stop_price  = sp;
+  }}
+
   btn.disabled = true;
   res.style.color = '#94a3b8';
-  res.textContent = 'Submitting order…';
-  fetch('/trade', {{
+  res.textContent = 'Submitting ' + _orderType + ' order…';
+  fetch(endpoint, {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{symbol: sym, qty: qty, side: _tradeSide}})
+    body: JSON.stringify(payload)
   }})
   .then(function(r) {{ return r.json(); }})
   .then(function(d) {{
     btn.disabled = false;
     if (d.ok) {{
       res.style.color = '#10b981';
-      res.textContent = (d.paper ? '[PAPER] ' : '') + _tradeSide + ' ' + d.qty + ' ' + d.symbol + ' — ' + d.status;
+      var typeLabel = d.type ? ' [' + d.type + ']' : '';
+      res.textContent = (d.paper ? '[PAPER] ' : '') + _tradeSide + ' ' + d.qty + ' ' + d.symbol + typeLabel + ' — ' + d.status;
+      loadOpenOrders();
     }} else {{
       res.style.color = '#ef4444';
       res.textContent = 'Error: ' + (d.error || 'Unknown');
@@ -2928,9 +3299,88 @@ window.submitTrade = function() {{
   }})
   .catch(function() {{ btn.disabled = false; res.style.color = '#ef4444'; res.textContent = 'Network error'; }});
 }};
+
 document.getElementById('tradeOverlay').addEventListener('click', function(e) {{
   if (e.target === this) closeTradeModal();
 }});
+
+// ── Order cancellation ────────────────────────────────────────────────────
+window.cancelOrder = function(orderId, btn) {{
+  if (!confirm('Cancel this order?')) return;
+  btn.disabled = true;
+  btn.textContent = '…';
+  fetch('/cancel-order', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{order_id: orderId}})
+  }})
+  .then(function(r) {{ return r.json(); }})
+  .then(function(d) {{
+    if (d.ok) {{
+      var row = btn.closest('tr');
+      if (row) row.style.opacity = '0.3';
+      btn.textContent = 'Cancelled';
+    }} else {{
+      btn.disabled = false;
+      btn.textContent = 'Cancel';
+      alert('Error: ' + (d.error || 'Unknown'));
+    }}
+  }})
+  .catch(function() {{ btn.disabled = false; btn.textContent = 'Cancel'; }});
+}};
+
+function loadOpenOrders() {{
+  var body = document.getElementById('ordersTableBody');
+  if (!body) return;
+  fetch('/api/orders')
+    .then(function(r) {{ return r.json(); }})
+    .then(function(orders) {{
+      if (!orders.length) {{
+        body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:rgba(255,255,255,.28)">No open orders</td></tr>';
+        return;
+      }}
+      body.innerHTML = orders.slice(0,20).map(function(o) {{
+        var side = String(o.side).replace('ORDERSIDE.','');
+        var sc   = side.indexOf('BUY')>=0 ? 'color:#34d399' : 'color:#f87171';
+        var otype = String(o.type||'market').replace('ORDERTYPE.','');
+        var st = String(o.status||'').replace('ORDERSTATUS.','').toLowerCase();
+        var sc2 = (st.includes('open')||st.includes('new')||st.includes('accept')) ? 'order-status-open'
+                : st.includes('fill') ? 'order-status-filled' : 'order-status-other';
+        var lp = o.limit_price ? '$'+parseFloat(o.limit_price).toFixed(2) : '—';
+        var sp = o.stop_price  ? '$'+parseFloat(o.stop_price).toFixed(2)  : '—';
+        return '<tr>'
+          + '<td class="pos-sym">' + o.symbol + '</td>'
+          + '<td style="'+sc+';font-weight:700">'+side+'</td>'
+          + '<td style="color:#94a3b8;font-size:12px">'+otype+'</td>'
+          + '<td>'+parseFloat(o.qty||0)+'</td>'
+          + '<td>'+lp+'</td>'
+          + '<td>'+sp+'</td>'
+          + '<td class="'+sc2+'">'+st+'</td>'
+          + '<td style="color:#475569;font-size:11px">'+(o.created_at||'').slice(0,10)+'</td>'
+          + '<td><button class="cancel-btn" onclick="cancelOrder(\''+o.id+'\',this)">Cancel</button></td>'
+          + '</tr>';
+      }}).join('');
+    }})
+    .catch(function(){{}});
+}}
+
+// ── Auto-execute toggle ───────────────────────────────────────────────────
+window.aeUpdate = function() {{
+  var enabled   = document.getElementById('aeToggle') && document.getElementById('aeToggle').checked;
+  var threshold = parseFloat((document.getElementById('aeThreshold')||{{}}).value||85) / 100;
+  var qty       = parseFloat((document.getElementById('aeQty')||{{}}).value||1);
+  fetch('/api/auto-execute', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{enabled: enabled, threshold: threshold, qty: qty}})
+  }})
+  .then(function(r) {{ return r.json(); }})
+  .then(function(d) {{
+    var st = document.getElementById('aeStatus');
+    if(st) st.textContent = d.enabled ? '✅ Enabled' : '⏹ Disabled';
+  }})
+  .catch(function(){{}});
+}};
 
 // ── Options Intelligence tab switcher (global scope) ─────────────────────
 window.optSwitch = function(tab) {{
