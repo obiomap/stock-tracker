@@ -159,6 +159,12 @@ def _migrate_columns() -> None:
             conn.execute("ALTER TABLE stocks ADD COLUMN fib_level TEXT DEFAULT ''")
         if stock_cols and "uptrend_prob" not in stock_cols:
             conn.execute("ALTER TABLE stocks ADD COLUMN uptrend_prob REAL")
+        if stock_cols and "demand_zone" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN demand_zone REAL")
+        if stock_cols and "supply_zone" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN supply_zone REAL")
+        if stock_cols and "poc_price" not in stock_cols:
+            conn.execute("ALTER TABLE stocks ADD COLUMN poc_price REAL")
         # subscribers table
         try:
             sub_cols = [r[1] for r in conn.execute("PRAGMA table_info(subscribers)").fetchall()]
@@ -210,6 +216,9 @@ def upsert_stock(data: dict) -> None:
     data["rule_signals"] = json.dumps(data.get("rule_signals", []))
     data.setdefault("sector", "General")
     data["last_updated"] = datetime.now().isoformat()
+    data.setdefault("demand_zone", None)
+    data.setdefault("supply_zone", None)
+    data.setdefault("poc_price",   None)
     with get_connection() as conn:
         # Use explicit column names so physical column order (which can vary
         # between fresh creates and ALTER TABLE migrations) never matters.
@@ -218,12 +227,14 @@ def upsert_stock(data: dict) -> None:
                 (symbol, price, prev_close, change_pct, volume, avg_volume,
                  rsi, macd, macd_signal, bb_pband, ma20, ma50, ma200,
                  prediction, prediction_confidence, rule_signals, sector,
-                 fib_signal, fib_level, uptrend_prob, last_updated)
+                 fib_signal, fib_level, uptrend_prob,
+                 demand_zone, supply_zone, poc_price, last_updated)
             VALUES
                 (:symbol, :price, :prev_close, :change_pct, :volume, :avg_volume,
                  :rsi, :macd, :macd_signal, :bb_pband, :ma20, :ma50, :ma200,
                  :prediction, :prediction_confidence, :rule_signals, :sector,
-                 :fib_signal, :fib_level, :uptrend_prob, :last_updated)
+                 :fib_signal, :fib_level, :uptrend_prob,
+                 :demand_zone, :supply_zone, :poc_price, :last_updated)
             ON CONFLICT(symbol) DO UPDATE SET
                 price=excluded.price, prev_close=excluded.prev_close,
                 change_pct=excluded.change_pct, volume=excluded.volume,
@@ -238,6 +249,9 @@ def upsert_stock(data: dict) -> None:
                 fib_signal=excluded.fib_signal,
                 fib_level=excluded.fib_level,
                 uptrend_prob=excluded.uptrend_prob,
+                demand_zone=excluded.demand_zone,
+                supply_zone=excluded.supply_zone,
+                poc_price=excluded.poc_price,
                 last_updated=excluded.last_updated
         """, data)
 

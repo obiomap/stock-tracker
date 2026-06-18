@@ -28,6 +28,7 @@ from tracker import social as social_mod
 from tracker import sms as sms_mod
 from tracker import options as opt_mod
 from tracker import sweeps as sweeps_mod
+from tracker import supply_demand as sd_mod
 
 console = Console()
 
@@ -188,6 +189,9 @@ def refresh_all(config: dict) -> None:
                 sector = sec_mod.resolve_sector(sym, config.get("stock_sectors", {}))
                 _fib = ind_data.get("fib_levels", {})
                 uptrend_prob = pred_mod.get_uptrend_probability(ind_data)
+
+                # Supply & demand zones from volume profile (free — uses existing hist)
+                _sd  = sd_mod.volume_zones(hist, snap["price"])
                 stock_row = {
                     "symbol": sym,
                     "price": snap["price"],
@@ -209,6 +213,9 @@ def refresh_all(config: dict) -> None:
                     "fib_signal": int(_fib.get("signal", 0)),
                     "fib_level":  _fib.get("signal_level", ""),
                     "uptrend_prob": uptrend_prob,
+                    "demand_zone": _sd["demand"][0]["price"] if _sd["demand"] else None,
+                    "supply_zone": _sd["supply"][0]["price"] if _sd["supply"] else None,
+                    "poc_price":   _sd.get("poc"),
                     # Extra indicator fields passed in-memory to alerts (not stored in DB)
                     "macd_hist":         ind_data.get("macd_hist"),
                     "obv_roc_5d":        ind_data.get("obv_roc_5d"),
@@ -373,6 +380,23 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
     top_recs = all_recs[:30]
     db.clear_option_recs()
     db.upsert_option_recs(top_recs)
+
+    # Compute OI levels (call wall / put wall / max pain) for each analysed symbol
+    oi_levels: dict = {}
+    for s in candidates[:15]:
+        try:
+            chain = opt_mod.fetch_option_chain(s["symbol"])
+            if chain:
+                levels = sd_mod.options_oi_levels(chain)
+                levels["price"] = s.get("price")
+                oi_levels[s["symbol"]] = levels
+        except Exception:
+            pass
+    try:
+        import json as _oijson
+        db.set_kv("oi_levels", _oijson.dumps(oi_levels))
+    except Exception:
+        pass
 
     # ── Email alert for genuinely new contracts ────────────────────────────────
     truly_new = []

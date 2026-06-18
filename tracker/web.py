@@ -2,12 +2,15 @@
 Subscriber signup web server (HTTPS).
 Run via: python main.py serve
 """
+import json as _json
 from flask import Flask, request, redirect, Response
 from . import database as db
 from . import config as cfg_mod
 from . import knowledge as kb_mod
 from . import sectors as sec_mod
 from . import social as social_mod
+from . import supply_demand as sd_mod
+from . import broker as broker_mod
 
 # ── CSS color maps ────────────────────────────────────────────────────────────
 
@@ -710,6 +713,78 @@ body{
             white-space:normal;line-height:1.4}
 .opt-empty{text-align:center;padding:28px;color:rgba(255,255,255,.28);font-style:italic}
 .opt-disclaimer{margin-top:10px;font-size:11px;color:rgba(255,255,255,.3);text-align:center}
+
+/* ── SUPPLY & DEMAND ── */
+.wl-zone-d{color:#10b981;font-size:11px;font-weight:700;white-space:nowrap}
+.wl-zone-s{color:#ef4444;font-size:11px;font-weight:700;white-space:nowrap}
+.wl-zone-na{color:rgba(255,255,255,.18);font-size:11px}
+
+/* ── TRADE BUTTONS ── */
+.trade-btn{display:inline-block;padding:2px 7px;border-radius:5px;font-size:11px;
+           font-weight:800;letter-spacing:.3px;cursor:pointer;border:none;
+           transition:opacity .15s}
+.trade-buy{background:rgba(16,185,129,.25);color:#34d399}
+.trade-buy:hover{background:rgba(16,185,129,.45)}
+.trade-sell{background:rgba(239,68,68,.25);color:#f87171;margin-left:4px}
+.trade-sell:hover{background:rgba(239,68,68,.45)}
+
+/* ── ORDER MODAL ── */
+.trade-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9000;
+               display:none;align-items:center;justify-content:center}
+.trade-overlay.open{display:flex}
+.trade-box{background:#0f172a;border:1px solid rgba(255,255,255,.14);border-radius:14px;
+           padding:28px 32px;min-width:320px;max-width:440px;width:90%}
+.trade-box h3{color:#e2e8f0;margin-bottom:18px;font-size:18px}
+.trade-field{margin-bottom:14px}
+.trade-field label{display:block;font-size:12px;color:rgba(255,255,255,.45);
+                   text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
+.trade-field input{width:100%;padding:9px 12px;border-radius:8px;
+                   background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+                   color:#e2e8f0;font-size:15px}
+.trade-paper-badge{display:inline-block;padding:3px 10px;border-radius:6px;
+                   background:rgba(245,158,11,.18);color:#fbbf24;
+                   font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:16px}
+.trade-live-badge{display:inline-block;padding:3px 10px;border-radius:6px;
+                  background:rgba(239,68,68,.18);color:#f87171;
+                  font-size:11px;font-weight:700;letter-spacing:.5px;margin-bottom:16px}
+.trade-actions{display:flex;gap:10px;margin-top:20px}
+.trade-cancel{flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
+              background:transparent;color:rgba(255,255,255,.55);cursor:pointer;font-size:14px}
+.trade-submit-buy{flex:2;padding:10px;border-radius:8px;border:none;
+                  background:#10b981;color:#fff;cursor:pointer;font-size:14px;font-weight:700}
+.trade-submit-sell{flex:2;padding:10px;border-radius:8px;border:none;
+                   background:#ef4444;color:#fff;cursor:pointer;font-size:14px;font-weight:700}
+.trade-result{margin-top:14px;font-size:13px;text-align:center;min-height:20px}
+
+/* ── POSITIONS CARD ── */
+.pos-section{margin-bottom:40px}
+.pos-table{width:100%;border-collapse:collapse;font-size:13px}
+.pos-table th{padding:8px 12px;text-align:left;font-size:11px;font-weight:700;
+              text-transform:uppercase;letter-spacing:.6px;
+              background:rgba(255,255,255,.04);color:rgba(255,255,255,.38)}
+.pos-table th:not(:first-child){text-align:right}
+.pos-table td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.04)}
+.pos-table td:not(:first-child){text-align:right}
+.pos-table tr:last-child td{border-bottom:none}
+.pos-sym{font-weight:700;color:#e2e8f0}
+.pos-pl-pos{color:#10b981;font-weight:700}
+.pos-pl-neg{color:#ef4444;font-weight:700}
+.pos-acct{display:flex;gap:20px;padding:12px 0 16px;flex-wrap:wrap}
+.pos-acct-item{font-size:12px;color:rgba(255,255,255,.45)}
+.pos-acct-val{font-size:15px;font-weight:700;color:#e2e8f0;display:block}
+
+/* ── OI LEVELS ── */
+.oi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:12px}
+.oi-card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);
+         border-radius:10px;padding:12px 16px}
+.oi-sym{font-weight:700;color:#e2e8f0;font-size:13px;margin-bottom:8px}
+.oi-row{display:flex;justify-content:space-between;font-size:12px;
+        padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.oi-row:last-child{border-bottom:none}
+.oi-lbl{color:rgba(255,255,255,.42)}
+.oi-call{color:#10b981;font-weight:700}
+.oi-put{color:#ef4444;font-weight:700}
+.oi-pain{color:#f59e0b;font-weight:700}
 """
 
 
@@ -1106,6 +1181,56 @@ def create_app() -> Flask:
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
+    # ── trading endpoints ─────────────────────────────────────────────────────
+
+    @_app.route("/trade", methods=["POST"])
+    def trade():
+        """Submit a market order via Alpaca. Body: {symbol, qty, side}."""
+        try:
+            body   = request.get_json(force=True) or {}
+            symbol = str(body.get("symbol", "")).upper().strip()
+            qty    = float(body.get("qty", 0))
+            side   = str(body.get("side", "")).upper()
+            if not symbol or qty <= 0 or side not in ("BUY", "SELL"):
+                return Response(_json.dumps({"ok": False, "error": "Invalid params"}),
+                                status=400, mimetype="application/json")
+            result = broker_mod.place_order(symbol, qty, side)
+            status = 200 if result["ok"] else 400
+            return Response(_json.dumps(result), status=status, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/api/positions")
+    def api_positions():
+        """Return current Alpaca positions as JSON."""
+        return Response(_json.dumps(broker_mod.get_positions()),
+                        mimetype="application/json")
+
+    @_app.route("/api/account")
+    def api_account():
+        """Return Alpaca account summary as JSON."""
+        acct = broker_mod.get_account()
+        return Response(_json.dumps(acct or {}), mimetype="application/json")
+
+    @_app.route("/api/bid-ask/<sym>")
+    def api_bid_ask(sym: str):
+        """Return live bid/ask spread for a symbol (60 s cache)."""
+        sym = sym.upper()
+        data = sd_mod.bid_ask_spread(sym)
+        return Response(_json.dumps(data), mimetype="application/json")
+
+    @_app.route("/api/sd/<sym>")
+    def api_sd(sym: str):
+        """Return full supply/demand zones for a symbol."""
+        from . import data as fetcher
+        sym  = sym.upper()
+        hist = fetcher.fetch_history(sym, period="2y")
+        s    = db.get_all_stocks()
+        price = next((x["price"] for x in s if x["symbol"] == sym), 0) or 0
+        zones = sd_mod.volume_zones(hist, price) if hist is not None else {"demand": [], "supply": [], "poc": None}
+        return Response(_json.dumps(zones), mimetype="application/json")
+
     # ── main index ────────────────────────────────────────────────────────────
 
     @_app.route("/")
@@ -1115,6 +1240,12 @@ def create_app() -> Flask:
         stock_sectors = config.get("stock_sectors", {})
         all_db      = {s["symbol"]: s for s in db.get_all_stocks()}
         public_url  = config.get("social", {}).get("public_url", "")
+
+        # -- broker / positions
+        broker_on  = broker_mod.is_configured()
+        broker_paper = broker_mod.is_paper()
+        positions  = broker_mod.get_positions() if broker_on else []
+        acct       = broker_mod.get_account()   if broker_on else None
 
         # -- ticker tape stocks
         ticker_stocks = [all_db[sym] for sym in watchlist if sym in all_db]
@@ -1370,6 +1501,82 @@ def create_app() -> Flask:
   </div>
 """
 
+        # -- positions card (Alpaca)
+        if broker_on and positions:
+            _acct_html = ""
+            if acct:
+                _pb  = '<span class="trade-paper-badge">PAPER</span>' if acct.get("paper") else '<span class="trade-live-badge">LIVE</span>'
+                _acct_html = (
+                    f'<div class="pos-acct">{_pb}'
+                    f'<span class="pos-acct-item">Portfolio <span class="pos-acct-val">${acct["portfolio_value"]:,.2f}</span></span>'
+                    f'<span class="pos-acct-item">Cash <span class="pos-acct-val">${acct["cash"]:,.2f}</span></span>'
+                    f'<span class="pos-acct-item">Buying Power <span class="pos-acct-val">${acct["buying_power"]:,.2f}</span></span>'
+                    f'</div>'
+                )
+            _pos_rows = ""
+            for _p in positions:
+                _pl_cls = "pos-pl-pos" if _p["unrealized_pl"] >= 0 else "pos-pl-neg"
+                _pl_sign = "+" if _p["unrealized_pl"] >= 0 else ""
+                _pos_rows += (
+                    f'<tr>'
+                    f'<td class="pos-sym">{sec_mod.display_symbol(_p["symbol"])}</td>'
+                    f'<td>{_p["qty"]:g}</td>'
+                    f'<td>${_p["avg_entry"]:.2f}</td>'
+                    f'<td>${_p["current_price"]:.2f}</td>'
+                    f'<td class="{_pl_cls}">{_pl_sign}${_p["unrealized_pl"]:.2f} ({_pl_sign}{_p["unrealized_plpc"]:.2f}%)</td>'
+                    f'<td>${_p["market_value"]:,.2f}</td>'
+                    f'</tr>'
+                )
+            positions_html = f"""
+  <div class="pos-section" id="positions">
+    <div class="section-head" style="margin-bottom:12px">
+      <h2>&#x1F4BC; Open Positions</h2>
+    </div>
+    {_acct_html}
+    <div class="wl-wrap">
+      <table class="pos-table">
+        <thead><tr>
+          <th>Symbol</th><th>Qty</th><th>Avg Entry</th>
+          <th>Price</th><th>Unrealized P&amp;L</th><th>Value</th>
+        </tr></thead>
+        <tbody>{_pos_rows}</tbody>
+      </table>
+    </div>
+  </div>"""
+        else:
+            positions_html = ""
+
+        # -- options OI levels
+        _oi_raw = db.get_kv("oi_levels")
+        _oi_data = {}
+        try:
+            if _oi_raw:
+                _oi_data = _json.loads(_oi_raw)
+        except Exception:
+            pass
+
+        _oi_cards = ""
+        for _osym, _olv in list(_oi_data.items())[:12]:
+            _cw  = _olv.get("call_wall")
+            _pw  = _olv.get("put_wall")
+            _mp  = _olv.get("max_pain")
+            _opr = _olv.get("price") or 0
+            _opr_span = (f'&nbsp;<span style="font-size:10px;color:rgba(255,255,255,.3)">${round(_opr,2)}</span>' if _opr else "")
+            _cw_row = (f'<div class="oi-row"><span class="oi-lbl">Call Wall</span><span class="oi-call">${_cw}</span></div>'
+                       if _cw else '<div class="oi-row"><span class="oi-lbl">Call Wall</span><span class="oi-lbl">—</span></div>')
+            _oi_cards += f'<div class="oi-card"><div class="oi-sym">{sec_mod.display_symbol(_osym)}{_opr_span}</div>{_cw_row}'
+            _oi_cards += (
+                f'<div class="oi-row"><span class="oi-lbl">Put Wall</span>'
+                f'<span class="oi-put">${_pw}</span></div>' if _pw else
+                f'<div class="oi-row"><span class="oi-lbl">Put Wall</span><span class="oi-lbl">—</span></div>'
+            )
+            _oi_cards += (
+                f'<div class="oi-row"><span class="oi-lbl">Max Pain</span>'
+                f'<span class="oi-pain">${_mp}</span></div>' if _mp else
+                f'<div class="oi-row"><span class="oi-lbl">Max Pain</span><span class="oi-lbl">—</span></div>'
+            )
+            _oi_cards += "</div>"
+
         # market context events
         _month, _day = _now.month, _now.day
         _first = _now.replace(day=1)
@@ -1527,9 +1734,10 @@ def create_app() -> Flask:
             syms_in_sect = sorted(wl_grouped[sect], key=lambda x: x["symbol"])
             sect_id = "".join(c if c.isalnum() else "_" for c in sect)
 
+            _wl_colspan = 10 + (1 if broker_on else 0)
             wl_rows += (
                 f'<tr class="wl-sect-row" data-sid="{sect_id}">'
-                f'<td colspan="9"><div class="wl-sect-toggle">'
+                f'<td colspan="{_wl_colspan}"><div class="wl-sect-toggle">'
                 f'<span style="color:{color}">{sect}</span>'
                 f'<span class="wl-sect-count">({len(syms_in_sect)})</span>'
                 f'<span class="wl-sect-chev">&#x25BE;</span>'
@@ -1578,6 +1786,30 @@ def create_app() -> Flask:
 
                 last_row = "wl-last" if i == len(syms_in_sect) - 1 else ""
 
+                # Supply & demand zone labels
+                _dz = s.get("demand_zone")
+                _sz = s.get("supply_zone")
+                if _dz and _sz:
+                    _zone_html = (f'<span class="wl-zone-d">D{_fmt_price(_dz)}</span>'
+                                  f'&nbsp;<span class="wl-zone-s">S{_fmt_price(_sz)}</span>')
+                elif _dz:
+                    _zone_html = f'<span class="wl-zone-d">D{_fmt_price(_dz)}</span>'
+                elif _sz:
+                    _zone_html = f'<span class="wl-zone-s">S{_fmt_price(_sz)}</span>'
+                else:
+                    _zone_html = '<span class="wl-zone-na">—</span>'
+
+                # Trade buttons (only when broker configured)
+                _sym_js   = sym.replace("'", "\\'")
+                _trade_td = (
+                    f'<td style="text-align:right;white-space:nowrap">'
+                    f'<button class="trade-btn trade-buy" '
+                    f'onclick="openTradeModal(\'{_sym_js}\',{price},\'BUY\')">B</button>'
+                    f'<button class="trade-btn trade-sell" '
+                    f'onclick="openTradeModal(\'{_sym_js}\',{price},\'SELL\')">S</button>'
+                    f'</td>'
+                ) if broker_on else ""
+
                 wl_rows += (
                     f'<tr class="wl-row wl-hidden {last_row}" data-sid="{sect_id}" '
                     f'data-sym="{sym.lower()}" data-sect="{sect.lower()}">'
@@ -1587,9 +1819,11 @@ def create_app() -> Flask:
                     f'<td class="wl-vol">{vol_str}</td>'
                     f'<td class="wl-rsi {rsi_cls}">{rsi_str}</td>'
                     f'<td class="wl-vs {vs_cls}">{vs_str}</td>'
+                    f'<td style="text-align:right;white-space:nowrap">{_zone_html}</td>'
                     f'<td class="wl-sig"><span class="wl-badge {sig_cls}">{sig_label}</span></td>'
                     f'<td class="wl-conf">{conf:.0f}%</td>'
                     f'<td class="wl-rsi {up_cls}" style="font-size:12px">{up_str}</td>'
+                    f'{_trade_td}'
                     f'</tr>'
                 )
 
@@ -1597,7 +1831,8 @@ def create_app() -> Flask:
         from datetime import datetime as _wl_dt
         wl_last_refresh = "Updated " + _wl_dt.now().strftime("%H:%M UTC")
         if not wl_rows:
-            wl_rows = '<tr><td colspan="9" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
+            _wl_colspan = 10 + (1 if broker_on else 0)
+            wl_rows = f'<tr><td colspan="{_wl_colspan}" style="text-align:center;padding:24px;color:rgba(255,255,255,.28);font-style:italic">Fetching live data — check back in a moment</td></tr>'
 
         # -- flow intelligence (sweeps / dark pool)
         sweep_data   = db.get_all_sweeps_today()
@@ -1873,6 +2108,19 @@ def create_app() -> Flask:
   </div>
 """
 
+        # -- OI levels section
+        if _oi_cards:
+            oi_section_html = f"""
+  <div class="opt-section" id="oi-levels">
+    <div class="section-head" style="margin-bottom:16px">
+      <h2>&#x1F3AF; OI Key Levels</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">Call wall &bull; Put wall &bull; Max pain &mdash; from open interest data</span>
+    </div>
+    <div class="oi-grid">{_oi_cards}</div>
+  </div>"""
+        else:
+            oi_section_html = ""
+
         # -- knowledge base preview (4 random-ish topics)
         preview_keys = ["rsi", "macd", "patterns_golden_cross", "risk_position_sizing"]
         topic_cards = ""
@@ -2028,6 +2276,9 @@ def create_app() -> Flask:
   <!-- SPX MARKET PULSE -->
   {spx_html}
 
+  <!-- POSITIONS -->
+  {positions_html}
+
   <!-- STOCKS OF THE WEEK -->
   <div class="sotw-section">
     <div class="section-head" style="margin-bottom:16px">
@@ -2120,9 +2371,11 @@ def create_app() -> Flask:
             <th style="text-align:right">Volume</th>
             <th style="text-align:right">RSI</th>
             <th style="text-align:right">vs&nbsp;MA50</th>
+            <th style="text-align:right" title="Nearest demand zone (D) and supply zone (S) from volume profile">D/S Zones</th>
             <th style="text-align:right">Signal</th>
             <th style="text-align:right">Conf</th>
             <th style="text-align:right" title="Probability of ≥10% rally in next 20 trading days (uptrend model)">Uptrend%</th>
+            {'<th style="text-align:right">Trade</th>' if broker_on else ''}
           </tr>
         </thead>
         <tbody id="wlBody">
@@ -2137,6 +2390,9 @@ def create_app() -> Flask:
 
   <!-- OPTIONS INTELLIGENCE -->
   {options_section_html}
+
+  <!-- OI LEVELS -->
+  {oi_section_html}
 
   <!-- KNOWLEDGE PREVIEW -->
   <div class="section-head">
@@ -2164,6 +2420,31 @@ def create_app() -> Flask:
     </div>
   </div>
 
+</div>
+
+<!-- TRADE MODAL OVERLAY -->
+<div class="trade-overlay" id="tradeOverlay">
+  <div class="trade-box">
+    <h3 id="tradeTitle">Place Order</h3>
+    <span id="tradePaperBadge"></span>
+    <div class="trade-field">
+      <label>Symbol</label>
+      <input type="text" id="tradeSym" readonly>
+    </div>
+    <div class="trade-field">
+      <label>Current Price</label>
+      <input type="text" id="tradePrice" readonly>
+    </div>
+    <div class="trade-field">
+      <label>Quantity (shares)</label>
+      <input type="number" id="tradeQty" min="0.001" step="0.001" value="1">
+    </div>
+    <div class="trade-actions">
+      <button class="trade-cancel" onclick="closeTradeModal()">Cancel</button>
+      <button class="trade-submit-buy" id="tradeSubmitBtn" onclick="submitTrade()">Buy</button>
+    </div>
+    <div class="trade-result" id="tradeResult"></div>
+  </div>
 </div>
 
 <footer class="footer">
@@ -2326,13 +2607,13 @@ def create_app() -> Flask:
       if (d.pred === 'BULLISH' || d.pred === 'UP')       {{ cls = 'wl-bull'; lbl = 'Bullish'; }}
       else if (d.pred === 'BEARISH' || d.pred === 'DOWN'){{ cls = 'wl-bear'; lbl = 'Bearish'; }}
       else                                                {{ cls = 'wl-neut'; lbl = 'Neutral'; }}
-      c[6].innerHTML = '<span class="wl-badge ' + cls + '">' + lbl + '</span>';
-      c[7].textContent = d.conf + '%';
+      c[7].innerHTML = '<span class="wl-badge ' + cls + '">' + lbl + '</span>';
+      c[8].textContent = d.conf + '%';
 
-      if (c.length >= 9 && d.uptrd != null) {{
-        c[8].textContent = Math.round(d.uptrd) + '%';
-        c[8].className = 'wl-rsi ' + (d.uptrd >= 60 ? 'up' : d.uptrd <= 35 ? 'down' : 'wl-na');
-        c[8].style.fontSize = '12px';
+      if (c.length >= 10 && d.uptrd != null) {{
+        c[9].textContent = Math.round(d.uptrd) + '%';
+        c[9].className = 'wl-rsi ' + (d.uptrd >= 60 ? 'up' : d.uptrd <= 35 ? 'down' : 'wl-na');
+        c[9].style.fontSize = '12px';
       }}
 
       if (changed) flash(row);
@@ -2366,6 +2647,59 @@ window.flowSwitch = function(tab) {{
   if(ts) ts.className = 'flow-tab' + (tab==='sweep'  ? ' active-sweep'  : '');
   if(td) td.className = 'flow-tab' + (tab==='dp'     ? ' active-dp'     : '');
 }};
+
+// ── Trade modal ───────────────────────────────────────────────────────────
+var _tradeSide = 'BUY';
+var _isPaper = {'true' if broker_paper else 'false'};
+window.openTradeModal = function(sym, price, side) {{
+  _tradeSide = side;
+  document.getElementById('tradeSym').value = sym;
+  document.getElementById('tradePrice').value = price ? '$' + price.toFixed(2) : '—';
+  var pb = document.getElementById('tradePaperBadge');
+  if (_isPaper) {{ pb.className = 'trade-paper-badge'; pb.textContent = 'PAPER MODE'; }}
+  else          {{ pb.className = 'trade-live-badge';  pb.textContent = 'LIVE — REAL MONEY'; }}
+  document.getElementById('tradeTitle').textContent = side + ' ' + sym;
+  var btn = document.getElementById('tradeSubmitBtn');
+  btn.className = side === 'BUY' ? 'trade-submit-buy' : 'trade-submit-sell';
+  btn.textContent = side === 'BUY' ? 'Submit Buy Order' : 'Submit Sell Order';
+  document.getElementById('tradeResult').textContent = '';
+  document.getElementById('tradeQty').value = '1';
+  document.getElementById('tradeOverlay').classList.add('open');
+  setTimeout(function(){{ document.getElementById('tradeQty').focus(); }}, 50);
+}};
+window.closeTradeModal = function() {{
+  document.getElementById('tradeOverlay').classList.remove('open');
+}};
+window.submitTrade = function() {{
+  var sym = document.getElementById('tradeSym').value;
+  var qty = parseFloat(document.getElementById('tradeQty').value) || 0;
+  var res = document.getElementById('tradeResult');
+  if (qty <= 0) {{ res.style.color = '#ef4444'; res.textContent = 'Enter a valid quantity.'; return; }}
+  var btn = document.getElementById('tradeSubmitBtn');
+  btn.disabled = true;
+  res.style.color = '#94a3b8';
+  res.textContent = 'Submitting order…';
+  fetch('/trade', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{symbol: sym, qty: qty, side: _tradeSide}})
+  }})
+  .then(function(r) {{ return r.json(); }})
+  .then(function(d) {{
+    btn.disabled = false;
+    if (d.ok) {{
+      res.style.color = '#10b981';
+      res.textContent = (d.paper ? '[PAPER] ' : '') + _tradeSide + ' ' + d.qty + ' ' + d.symbol + ' — ' + d.status;
+    }} else {{
+      res.style.color = '#ef4444';
+      res.textContent = 'Error: ' + (d.error || 'Unknown');
+    }}
+  }})
+  .catch(function() {{ btn.disabled = false; res.style.color = '#ef4444'; res.textContent = 'Network error'; }});
+}};
+document.getElementById('tradeOverlay').addEventListener('click', function(e) {{
+  if (e.target === this) closeTradeModal();
+}});
 
 // ── Options Intelligence tab switcher (global scope) ─────────────────────
 window.optSwitch = function(tab) {{
