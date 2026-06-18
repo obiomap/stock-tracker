@@ -3445,6 +3445,12 @@ window.optSwitch = function(tab) {{
   if(tc) {{ tc.className = 'opt-tab' + (tab==='call' ? ' active-call' : ''); }}
   if(tp) {{ tp.className = 'opt-tab' + (tab==='put'  ? ' active-put'  : ''); }}
 }};
+
+// ── Auto-refresh orders on load and every 30s ─────────────────────────────
+if (document.getElementById('ordersTableBody')) {{
+  loadOpenOrders();
+  setInterval(loadOpenOrders, 30000);
+}}
 </script>
 """
         )
