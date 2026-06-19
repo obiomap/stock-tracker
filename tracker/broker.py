@@ -346,15 +346,7 @@ def get_option_quote(underlying: str, expiry: str, strike: float, opt_type: str)
 
 def place_option_limit_order(underlying: str, expiry: str, strike: float,
                               opt_type: str, qty: int, limit_price: float) -> dict:
-    """
-    Buy an option contract at a DAY limit price.
-    underlying: stock ticker (e.g. 'NVDA')
-    expiry: 'YYYY-MM-DD'
-    strike: strike price (e.g. 850.0)
-    opt_type: 'CALL' or 'PUT'
-    qty: number of contracts
-    limit_price: per-contract premium limit
-    """
+    """Buy an option contract at a DAY limit price."""
     if not is_configured():
         return {"ok": False, "error": "Alpaca credentials not configured"}
     if qty <= 0:
@@ -386,6 +378,45 @@ def place_option_limit_order(underlying: str, expiry: str, strike: float,
             "limit_price": limit_price,
             "paper":       is_paper(),
             "type":        "option_limit",
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def close_option_position(occ_symbol: str, qty: int, current_bid: float) -> dict:
+    """Sell to close an option position.  Uses a limit at bid (or market if bid=0)."""
+    if not is_configured():
+        return {"ok": False, "error": "Alpaca credentials not configured"}
+    if qty <= 0:
+        return {"ok": False, "error": "Quantity must be > 0"}
+    try:
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        if current_bid and current_bid > 0:
+            from alpaca.trading.requests import LimitOrderRequest
+            req = LimitOrderRequest(
+                symbol=occ_symbol,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+                limit_price=round(current_bid, 2),
+            )
+        else:
+            from alpaca.trading.requests import MarketOrderRequest
+            req = MarketOrderRequest(
+                symbol=occ_symbol,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+            )
+        order = _client().submit_order(req)
+        return {
+            "ok":     True,
+            "id":     str(order.id),
+            "status": str(order.status),
+            "symbol": occ_symbol,
+            "qty":    int(qty),
+            "paper":  is_paper(),
+            "type":   "option_close",
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}

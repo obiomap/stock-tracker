@@ -13,6 +13,7 @@ from . import social as social_mod
 from . import supply_demand as sd_mod
 from . import broker as broker_mod
 from . import order_flow as of_mod
+from . import option_manager as _option_mgr
 
 # ── CSS color maps ────────────────────────────────────────────────────────────
 
@@ -1304,6 +1305,9 @@ h1 .acc{background:linear-gradient(90deg,#818cf8,#c084fc);
 def create_app() -> Flask:
     _app = Flask(__name__)
 
+    # ── Start option auto-management monitor ──────────────────────────────────
+    _option_mgr.start()
+
     # ── Secret key (stable across restarts via kv_store) ─────────────────────
     _secret = _os.environ.get("SECRET_KEY") or db.get_kv("flask_secret_key")
     if not _secret:
@@ -1835,6 +1839,117 @@ def create_app() -> Flask:
             return Response(_json.dumps({"ok": False, "error": str(e)}),
                             status=500, mimetype="application/json")
 
+    @_app.route("/trade/smart-option", methods=["POST"])
+    def trade_smart_option():
+        """Place an option BUY order AND register it for automatic risk management.
+        Body: {underlying, expiry, strike, opt_type, qty, limit_price,
+               stop_loss_pct (default 20), trail_trigger_pct (default 20), trail_pct (default 5)}
+        """
+        try:
+            body            = request.get_json(force=True) or {}
+            underlying      = str(body.get("underlying", "")).upper().strip()
+            expiry          = str(body.get("expiry", "")).strip()
+            strike          = float(body.get("strike", 0) or 0)
+            opt_type        = str(body.get("opt_type", "CALL")).upper()
+            qty             = int(body.get("qty", 0) or 0)
+            limit_price     = float(body.get("limit_price", 0) or 0)
+            stop_loss_pct   = float(body.get("stop_loss_pct", 20) or 20)
+            trail_trigger   = float(body.get("trail_trigger_pct", 20) or 20)
+            trail_pct       = float(body.get("trail_pct", 5) or 5)
+
+            if not underlying or not expiry or strike <= 0 or qty <= 0 or limit_price <= 0:
+                return Response(_json.dumps({"ok": False, "error": "Missing or invalid params"}),
+                                status=400, mimetype="application/json")
+
+            result = broker_mod.place_option_limit_order(
+                underlying, expiry, strike, opt_type, qty, limit_price)
+
+            if result.get("ok"):
+                email = session.get("subscriber_email", "")
+                db.record_subscriber_order(result["id"], email, underlying)
+                managed_id = db.create_managed_option(
+                    subscriber_email  = email,
+                    order_id          = result["id"],
+                    underlying        = underlying,
+                    occ_symbol        = result["symbol"],
+                    expiry            = expiry,
+                    strike            = strike,
+                    opt_type          = opt_type,
+                    qty               = qty,
+                    entry_price       = limit_price,
+                    stop_loss_pct     = stop_loss_pct,
+                    trail_trigger_pct = trail_trigger,
+                    trail_pct         = trail_pct,
+                )
+                result["managed_id"] = managed_id
+                result["auto_managed"] = True
+
+            return Response(_json.dumps(result),
+                            status=200 if result["ok"] else 400, mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
+    @_app.route("/api/managed-options")
+    def api_managed_options():
+        """Return managed option positions for the logged-in subscriber with live P&L."""
+        email = session.get("subscriber_email", "")
+        rows = db.get_subscriber_managed_options(email)
+        out = []
+        for r in rows:
+            entry = float(r["entry_price"])
+            current = None
+            pnl_pct = None
+            if r["status"] == "active":
+                try:
+                    q = broker_mod.get_option_quote(
+                        r["underlying"], r["expiry"], float(r["strike"]), r["opt_type"])
+                    if q.get("ok"):
+                        bid = float(q.get("bid") or 0)
+                        last = float(q.get("last") or 0)
+                        current = bid if bid > 0 else (last if last > 0 else None)
+                except Exception:
+                    pass
+            if current and entry > 0:
+                pnl_pct = round((current - entry) / entry * 100, 2)
+            out.append({
+                "id":              r["id"],
+                "underlying":      r["underlying"],
+                "occ_symbol":      r["occ_symbol"],
+                "expiry":          r["expiry"],
+                "strike":          r["strike"],
+                "opt_type":        r["opt_type"],
+                "qty":             r["qty"],
+                "entry_price":     entry,
+                "current_price":   current,
+                "pnl_pct":         pnl_pct,
+                "stop_loss_pct":   r["stop_loss_pct"],
+                "trail_trigger_pct": r["trail_trigger_pct"],
+                "trail_pct":       r["trail_pct"],
+                "trailing_active": bool(r["trailing_active"]),
+                "peak_price":      r["peak_price"],
+                "trail_stop_price": r["trail_stop_price"],
+                "status":          r["status"],
+                "created_at":      r["created_at"],
+            })
+        return Response(_json.dumps(out), mimetype="application/json")
+
+    @_app.route("/managed-option/deactivate", methods=["POST"])
+    def deactivate_managed_option():
+        """Stop auto-managing a position (does NOT close it). Body: {id}."""
+        try:
+            body     = request.get_json(force=True) or {}
+            pos_id   = int(body.get("id", 0) or 0)
+            email    = session.get("subscriber_email", "")
+            if not pos_id:
+                return Response(_json.dumps({"ok": False, "error": "id required"}),
+                                status=400, mimetype="application/json")
+            ok = db.deactivate_managed_option(pos_id, email)
+            return Response(_json.dumps({"ok": ok}), mimetype="application/json")
+        except Exception as e:
+            return Response(_json.dumps({"ok": False, "error": str(e)}),
+                            status=500, mimetype="application/json")
+
     @_app.route("/api/orders")
     def api_orders():
         """Return Alpaca orders belonging to the logged-in subscriber."""
@@ -2320,6 +2435,76 @@ def create_app() -> Flask:
   </div>"""
         else:
             orders_html = ""
+
+        # -- managed option positions section
+        if broker_on:
+            _mo_rows_html = db.get_subscriber_managed_options(_sub_email)
+            _mo_tbody = ""
+            for _mo in _mo_rows_html[:20]:
+                _entry   = float(_mo["entry_price"])
+                _status  = _mo["status"]
+                _trail   = bool(_mo["trailing_active"])
+                _trail_stop = _mo["trail_stop_price"]
+                _stop_at = round(_entry * (1 - float(_mo["stop_loss_pct"]) / 100), 2)
+                _trigger_at = round(_entry * (1 + float(_mo["trail_trigger_pct"]) / 100), 2)
+                if _status == "active":
+                    _status_html = ('<span style="color:#34d399;font-weight:700">Active</span>'
+                                   if not _trail else
+                                   '<span style="color:#f59e0b;font-weight:700">&#x26A1; Trailing</span>')
+                elif _status == "stop_loss":
+                    _status_html = '<span style="color:#ef4444">Stop-Loss Hit</span>'
+                elif _status == "trailing_stop":
+                    _status_html = '<span style="color:#f59e0b">Trail Closed</span>'
+                elif _status == "deactivated":
+                    _status_html = '<span style="color:#475569">Deactivated</span>'
+                else:
+                    _status_html = f'<span style="color:#94a3b8">{_status}</span>'
+
+                _trail_level_html = (
+                    f'${float(_trail_stop):.2f}' if _trail and _trail_stop else
+                    f'<span style="color:#94a3b8">triggers @ ${_trigger_at:.2f}</span>'
+                )
+                _deact_btn = (
+                    f'<button class="cancel-btn" onclick="deactivateManagedOption({_mo["id"]}, this)">Stop</button>'
+                    if _status == "active" else ""
+                )
+                _mo_tbody += (
+                    f'<tr id="mo-{_mo["id"]}">'
+                    f'<td class="pos-sym">{_mo["underlying"]}</td>'
+                    f'<td style="font-size:11px;color:#94a3b8">{_mo["occ_symbol"]}</td>'
+                    f'<td>{_mo["opt_type"]}</td>'
+                    f'<td>{_mo["qty"]}</td>'
+                    f'<td>${_entry:.2f}</td>'
+                    f'<td id="mo-price-{_mo["id"]}" style="color:#94a3b8">—</td>'
+                    f'<td id="mo-pnl-{_mo["id"]}" style="color:#94a3b8">—</td>'
+                    f'<td style="color:#ef4444">${_stop_at:.2f} <small style="color:#475569">(-{_mo["stop_loss_pct"]:.0f}%)</small></td>'
+                    f'<td>{_trail_level_html}</td>'
+                    f'<td>{_status_html}</td>'
+                    f'<td>{_deact_btn}</td>'
+                    f'</tr>'
+                )
+            if not _mo_tbody:
+                _mo_tbody = '<tr><td colspan="11" style="text-align:center;padding:20px;color:rgba(255,255,255,.28)">No managed option positions — place a Smart Option order to enable auto risk management</td></tr>'
+
+            managed_options_html = f"""
+  <div class="pos-section" id="managedOptions">
+    <div class="section-head" style="margin-bottom:12px">
+      <h2>&#x1F916; Managed Option Positions</h2>
+      <span style="font-size:12px;color:rgba(255,255,255,.35)">Auto stop-loss &amp; trailing stop &bull; refreshes every 30s</span>
+    </div>
+    <div class="wl-wrap">
+      <table class="pos-table" style="font-size:13px">
+        <thead><tr>
+          <th>Symbol</th><th>Contract</th><th>Type</th><th>Qty</th>
+          <th>Entry</th><th>Current</th><th>P&amp;L %</th>
+          <th>Stop Loss</th><th>Trail Stop</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="managedOptionsBody">{_mo_tbody}</tbody>
+      </table>
+    </div>
+  </div>"""
+        else:
+            managed_options_html = ""
 
         # -- options OI levels
         _oi_raw = db.get_kv("oi_levels")
@@ -3180,6 +3365,7 @@ def create_app() -> Flask:
     <a href="#ngx-intel">&#x1F1F3;&#x1F1EC; NGX</a>
     {'<a href="#positions">&#x1F4BC; Positions</a>' if broker_on else ''}
     {'<a href="#orders">&#x1F4CB; Orders</a>' if broker_on else ''}
+    {'<a href="#managedOptions">&#x1F916; Managed</a>' if broker_on else ''}
     <a href="#flow">&#x1F30A; Flow</a>
     <a href="#options">Options</a>
     <a href="#oi-levels">OI Levels</a>
@@ -3313,6 +3499,9 @@ def create_app() -> Flask:
 
   <!-- OPEN ORDERS -->
   {orders_html}
+
+  <!-- MANAGED OPTIONS -->
+  {managed_options_html}
 
   <!-- STOCKS OF THE WEEK -->
   <div class="sotw-section">
@@ -3524,6 +3713,36 @@ def create_app() -> Flask:
       <div class="trade-field">
         <label>Contracts</label>
         <input type="number" id="optQty" min="1" step="1" value="1">
+      </div>
+      <!-- Smart auto-management toggle -->
+      <div style="border-top:1px solid var(--border);margin:12px 0 10px;padding-top:12px">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;font-weight:600;color:#f59e0b">
+          <input type="checkbox" id="optSmartToggle" checked onchange="toggleSmartFields()" style="width:16px;height:16px;accent-color:#f59e0b">
+          &#x1F916; Smart Auto-Management
+        </label>
+        <div style="font-size:11px;color:#94a3b8;margin:4px 0 10px 26px">Auto sell-to-close on risk conditions via Alpaca</div>
+        <div id="optSmartFields">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div>
+              <label style="font-size:11px;color:#94a3b8;display:block;margin-bottom:4px">Stop Loss %</label>
+              <input type="number" id="optStopLossPct" min="1" max="99" step="1" value="20"
+                     style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:#ef4444;font-size:13px;font-weight:700">
+            </div>
+            <div>
+              <label style="font-size:11px;color:#94a3b8;display:block;margin-bottom:4px">Trail Trigger %</label>
+              <input type="number" id="optTrailTrigger" min="1" max="500" step="1" value="20"
+                     style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:#34d399;font-size:13px;font-weight:700">
+            </div>
+            <div>
+              <label style="font-size:11px;color:#94a3b8;display:block;margin-bottom:4px">Trail %</label>
+              <input type="number" id="optTrailPct" min="1" max="50" step="0.5" value="5"
+                     style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:#f59e0b;font-size:13px;font-weight:700">
+            </div>
+          </div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:6px">
+            Close if loss &ge; Stop% &nbsp;|&nbsp; Activate trail when gain &ge; Trigger% &nbsp;|&nbsp; Trail closes if drops Trail% from peak
+          </div>
+        </div>
       </div>
     </div>
     <div class="trade-actions">
@@ -3875,8 +4094,25 @@ window.submitTrade = function() {{
       res.textContent = 'Fill expiry, strike, contracts and limit price (use Fetch Ask first).';
       return;
     }}
-    endpoint = '/trade/option';
-    payload = {{ underlying: sym, expiry: oExpiry, strike: oStrike, opt_type: _optType, qty: oQty, limit_price: oLp }};
+    var smartEl = document.getElementById('optSmartToggle');
+    var isSmart = smartEl && smartEl.checked;
+    if (isSmart) {{
+      endpoint = '/trade/smart-option';
+      payload = {{
+        underlying:       sym,
+        expiry:           oExpiry,
+        strike:           oStrike,
+        opt_type:         _optType,
+        qty:              oQty,
+        limit_price:      oLp,
+        stop_loss_pct:    parseFloat((document.getElementById('optStopLossPct')||{{}}).value) || 20,
+        trail_trigger_pct: parseFloat((document.getElementById('optTrailTrigger')||{{}}).value) || 20,
+        trail_pct:        parseFloat((document.getElementById('optTrailPct')||{{}}).value) || 5,
+      }};
+    }} else {{
+      endpoint = '/trade/option';
+      payload = {{ underlying: sym, expiry: oExpiry, strike: oStrike, opt_type: _optType, qty: oQty, limit_price: oLp }};
+    }}
   }}
 
   btn.disabled = true;
@@ -3893,7 +4129,9 @@ window.submitTrade = function() {{
     if (d.ok) {{
       res.style.color = '#10b981';
       if (d.type === 'option_limit') {{
-        res.textContent = (d.paper ? '[PAPER] ' : '') + 'BUY ' + d.qty + 'x ' + d.symbol + ' limit $' + d.limit_price.toFixed(2) + ' — ' + d.status;
+        var mgdNote = d.auto_managed ? ' 🤖 auto-managed' : '';
+        res.textContent = (d.paper ? '[PAPER] ' : '') + 'BUY ' + d.qty + 'x ' + d.symbol + ' limit $' + d.limit_price.toFixed(2) + ' — ' + d.status + mgdNote;
+        if (d.auto_managed) loadManagedOptions();
       }} else {{
         var typeLabel = d.type ? ' [' + d.type + ']' : '';
         res.textContent = (d.paper ? '[PAPER] ' : '') + _tradeSide + ' ' + d.qty + ' ' + d.symbol + typeLabel + ' — ' + d.status;
@@ -3969,6 +4207,96 @@ function loadOpenOrders() {{
       }}).join('');
     }})
     .catch(function(){{}});
+}}
+
+// ── Smart Option: toggle smart fields ────────────────────────────────────
+window.toggleSmartFields = function() {{
+  var el = document.getElementById('optSmartToggle');
+  var sf = document.getElementById('optSmartFields');
+  if (sf) sf.style.display = (el && el.checked) ? 'block' : 'none';
+}};
+
+// ── Managed Options dashboard ─────────────────────────────────────────────
+function loadManagedOptions() {{
+  var body = document.getElementById('managedOptionsBody');
+  if (!body) return;
+  fetch('/api/managed-options')
+    .then(function(r) {{ return r.json(); }})
+    .then(function(rows) {{
+      if (!rows.length) {{
+        body.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:rgba(255,255,255,.28)">No managed option positions — place a Smart Option order to enable auto risk management</td></tr>';
+        return;
+      }}
+      body.innerHTML = rows.slice(0,20).map(function(m) {{
+        var entry   = parseFloat(m.entry_price||0);
+        var cur     = m.current_price != null ? parseFloat(m.current_price) : null;
+        var pnl     = m.pnl_pct != null ? parseFloat(m.pnl_pct) : null;
+        var stopAt  = entry > 0 ? (entry * (1 - parseFloat(m.stop_loss_pct||20)/100)).toFixed(2) : '—';
+        var curHtml = cur != null ? '$' + cur.toFixed(2) : '<span style="color:#475569">—</span>';
+        var pnlHtml;
+        if (pnl != null) {{
+          var pc = pnl >= 0 ? '#34d399' : '#ef4444';
+          pnlHtml = '<span style="color:'+pc+';font-weight:700">' + (pnl>=0?'+':'') + pnl.toFixed(1) + '%</span>';
+        }} else {{
+          pnlHtml = '<span style="color:#475569">—</span>';
+        }}
+        var trailHtml;
+        if (m.trailing_active && m.trail_stop_price) {{
+          trailHtml = '<span style="color:#f59e0b;font-weight:700">$' + parseFloat(m.trail_stop_price).toFixed(2) + '</span>';
+        }} else {{
+          var trigAt = entry > 0 ? (entry * (1 + parseFloat(m.trail_trigger_pct||20)/100)).toFixed(2) : '—';
+          trailHtml = '<span style="color:#94a3b8;font-size:11px">triggers @$' + trigAt + '</span>';
+        }}
+        var statusHtml;
+        var st = m.status || 'active';
+        if (st === 'active') {{
+          statusHtml = m.trailing_active
+            ? '<span style="color:#f59e0b;font-weight:700">&#x26A1; Trailing</span>'
+            : '<span style="color:#34d399;font-weight:700">Active</span>';
+        }} else if (st === 'stop_loss')    {{ statusHtml = '<span style="color:#ef4444">Stop-Loss Hit</span>'; }}
+        else if (st === 'trailing_stop')   {{ statusHtml = '<span style="color:#f59e0b">Trail Closed</span>'; }}
+        else if (st === 'deactivated')     {{ statusHtml = '<span style="color:#475569">Deactivated</span>'; }}
+        else {{ statusHtml = '<span style="color:#94a3b8">' + st + '</span>'; }}
+        var deactBtn = st === 'active'
+          ? '<button class="cancel-btn" onclick="deactivateManagedOption(' + m.id + ',this)">Stop</button>' : '';
+        return '<tr id="mo-' + m.id + '">'
+          + '<td class="pos-sym">' + m.underlying + '</td>'
+          + '<td style="font-size:11px;color:#94a3b8">' + m.occ_symbol + '</td>'
+          + '<td>' + m.opt_type + '</td>'
+          + '<td>' + m.qty + '</td>'
+          + '<td>$' + entry.toFixed(2) + '</td>'
+          + '<td>' + curHtml + '</td>'
+          + '<td>' + pnlHtml + '</td>'
+          + '<td style="color:#ef4444">$' + stopAt + ' <small style="color:#475569">(-' + (m.stop_loss_pct||20) + '%)</small></td>'
+          + '<td>' + trailHtml + '</td>'
+          + '<td>' + statusHtml + '</td>'
+          + '<td>' + deactBtn + '</td>'
+          + '</tr>';
+      }}).join('');
+    }})
+    .catch(function(){{}});
+}}
+
+window.deactivateManagedOption = function(posId, btn) {{
+  if (!confirm('Stop auto-managing this position? (The position itself will NOT be closed.)')) return;
+  btn.disabled = true;
+  btn.textContent = '…';
+  fetch('/managed-option/deactivate', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{id: posId}})
+  }})
+  .then(function(r) {{ return r.json(); }})
+  .then(function(d) {{
+    if (d.ok) {{ loadManagedOptions(); }}
+    else {{ btn.disabled = false; btn.textContent = 'Stop'; alert('Error: ' + (d.error||'Unknown')); }}
+  }})
+  .catch(function() {{ btn.disabled = false; btn.textContent = 'Stop'; }});
+}};
+
+if (document.getElementById('managedOptionsBody')) {{
+  loadManagedOptions();
+  setInterval(loadManagedOptions, 30000);
 }}
 
 // ── Auto-execute toggle ───────────────────────────────────────────────────

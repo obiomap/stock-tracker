@@ -149,6 +149,29 @@ def init_db() -> None:
                 symbol TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS managed_option_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscriber_email TEXT NOT NULL,
+                order_id TEXT NOT NULL DEFAULT '',
+                underlying TEXT NOT NULL,
+                occ_symbol TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                strike REAL NOT NULL,
+                opt_type TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                entry_price REAL NOT NULL,
+                stop_loss_pct REAL NOT NULL DEFAULT 20,
+                trail_trigger_pct REAL NOT NULL DEFAULT 20,
+                trail_pct REAL NOT NULL DEFAULT 5,
+                status TEXT NOT NULL DEFAULT 'active',
+                trailing_active INTEGER NOT NULL DEFAULT 0,
+                peak_price REAL,
+                trail_stop_price REAL,
+                close_order_id TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
         """)
     _migrate_columns()
 
@@ -729,3 +752,77 @@ def is_subscriber_order(order_id: str, subscriber_email: str) -> bool:
             (order_id, subscriber_email),
         ).fetchone()
     return row is not None
+
+
+# ── Managed option positions ───────────────────────────────────────────────────
+
+def create_managed_option(
+    subscriber_email: str, order_id: str, underlying: str, occ_symbol: str,
+    expiry: str, strike: float, opt_type: str, qty: int, entry_price: float,
+    stop_loss_pct: float = 20.0, trail_trigger_pct: float = 20.0, trail_pct: float = 5.0,
+) -> int:
+    """Insert a new managed option position. Returns the new row id."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            """INSERT INTO managed_option_positions
+               (subscriber_email, order_id, underlying, occ_symbol, expiry, strike,
+                opt_type, qty, entry_price, stop_loss_pct, trail_trigger_pct, trail_pct)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (subscriber_email, order_id, underlying, occ_symbol, expiry, float(strike),
+             opt_type.upper(), int(qty), float(entry_price),
+             float(stop_loss_pct), float(trail_trigger_pct), float(trail_pct)),
+        )
+        return cur.lastrowid
+
+
+def get_active_managed_options() -> list:
+    """Return all rows with status='active' (used by the monitor loop)."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM managed_option_positions WHERE status='active'",
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_subscriber_managed_options(subscriber_email: str) -> list:
+    """Return all managed option rows for a subscriber, newest first."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM managed_option_positions WHERE subscriber_email=? ORDER BY id DESC",
+            (subscriber_email,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_managed_option_state(
+    pos_id: int, trailing_active: bool, peak_price: float, trail_stop_price: float,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE managed_option_positions
+               SET trailing_active=?, peak_price=?, trail_stop_price=?,
+                   updated_at=datetime('now')
+               WHERE id=?""",
+            (1 if trailing_active else 0, float(peak_price), float(trail_stop_price), pos_id),
+        )
+
+
+def close_managed_option(pos_id: int, reason: str, close_order_id: str = "") -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE managed_option_positions
+               SET status=?, close_order_id=?, updated_at=datetime('now')
+               WHERE id=?""",
+            (reason, close_order_id, pos_id),
+        )
+
+
+def deactivate_managed_option(pos_id: int, subscriber_email: str) -> bool:
+    """Mark a position as 'deactivated' by its owner. Returns True if row found."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            """UPDATE managed_option_positions SET status='deactivated', updated_at=datetime('now')
+               WHERE id=? AND subscriber_email=? AND status='active'""",
+            (pos_id, subscriber_email),
+        )
+    return cur.rowcount > 0
