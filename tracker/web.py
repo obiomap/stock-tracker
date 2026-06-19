@@ -1330,6 +1330,7 @@ def create_app() -> Flask:
             return None
         # API / trading endpoints return JSON 401
         if (path.startswith("/api/") or path.startswith("/trade")
+                or path.startswith("/managed-option/")
                 or path == "/cancel-order"):
             return Response(_json.dumps({"error": "Login required"}),
                             status=401, mimetype="application/json")
