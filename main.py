@@ -1308,6 +1308,378 @@ def list_subscribers():
     console.print(table)
 
 
+# ── batch smart-option deployment (LIVE-safe wrapper around /trade/smart-option) ─
+
+MONITOR_DEFAULT_TICKERS = "ARM,AMD,TSLA,AAPL,NVTS,CRWV,MP,MRVL"
+
+
+def _minutes_to_market_close() -> Optional[int]:
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:
+            return None
+        open_t  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+        close_t = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+        if now < open_t or now >= close_t:
+            return None
+        return int((close_t - now).total_seconds() // 60)
+    except Exception:
+        return None
+
+
+def _log_deploy_action(entry: str) -> None:
+    import pathlib as _pl
+    log_path = _pl.Path("deploy_options.log")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {entry}\n")
+    except Exception:
+        pass
+
+
+def _db_signals_for(symbols: list) -> dict:
+    """Return {symbol: signals_dict} for symbols present in the stocks table."""
+    wanted = set(symbols)
+    out: dict = {}
+    for row in db.get_all_stocks():
+        sym = row.get("symbol")
+        if sym not in wanted:
+            continue
+        if not row.get("price") or not row.get("prediction"):
+            continue
+        out[sym] = {
+            "symbol":       sym,
+            "price":        float(row["price"]),
+            "signal":       row["prediction"],
+            "confidence":   float(row.get("prediction_confidence") or 0),
+            "rsi":          row.get("rsi"),
+            "macd":         row.get("macd"),
+            "change_pct":   row.get("change_pct"),
+            "fib_signal":   int(row.get("fib_signal") or 0),
+            "fib_level":    row.get("fib_level") or "",
+            "last_updated": row.get("last_updated"),
+            "source":       "db",
+        }
+    return out
+
+
+def _fresh_signals_for(sym: str) -> Optional[dict]:
+    """Cold-start signal generation for one symbol (used when --fresh)."""
+    snap = fetcher.fetch_ticker_snapshot(sym)
+    if not snap:
+        return None
+    hist = fetcher.fetch_history(sym, period="2y")
+    if hist is None or len(hist) < 30:
+        return None
+    ind_data = ind.get_latest_indicators(hist)
+    p = pred_mod.generate_prediction(sym, ind_data, snap, None,
+                                       market_regime=0.0, vix=0.0)
+    fib = ind_data.get("fib_levels") or {}
+    return {
+        "symbol":       sym,
+        "price":        float(snap["price"]),
+        "signal":       p["signal"],
+        "confidence":   float(p["confidence"]),
+        "rsi":          ind_data.get("rsi"),
+        "macd":         ind_data.get("macd"),
+        "change_pct":   snap.get("change_pct"),
+        "fib_signal":   int(fib.get("signal", 0)),
+        "fib_level":    fib.get("signal_level", ""),
+        "last_updated": None,
+        "source":       "fresh",
+    }
+
+
+def _minutes_since_iso(iso_ts: Optional[str]) -> Optional[int]:
+    if not iso_ts:
+        return None
+    try:
+        return int((datetime.now() - datetime.fromisoformat(iso_ts)).total_seconds() // 60)
+    except Exception:
+        return None
+
+
+@cli.command(name="deploy-options")
+@click.option("--budget", type=float, required=True,
+              help="Total capital cap (USD) to allocate across all tickers.")
+@click.option("--tickers", default=MONITOR_DEFAULT_TICKERS, show_default=True,
+              help="Comma-separated ticker list.")
+@click.option("--subscriber", default="obiomap@gmail.com", show_default=True,
+              help="Subscriber email attribution for managed positions.")
+@click.option("--min-confidence", type=float, default=0.6, show_default=True,
+              help="Skip signals below this prediction confidence.")
+@click.option("--min-score", type=float, default=60.0, show_default=True,
+              help="Skip contracts below this option score (0-100).")
+@click.option("--stop-loss-pct",     type=float, default=20.0, show_default=True)
+@click.option("--trail-trigger-pct", type=float, default=20.0, show_default=True)
+@click.option("--trail-pct",         type=float, default=5.0,  show_default=True)
+@click.option("--confirm", is_flag=True, default=False,
+              help="Required to submit orders. Without --confirm the command is dry-run only.")
+@click.option("--live", is_flag=True, default=False,
+              help="Allow execution against a LIVE Alpaca account. Without --live, refuses when ALPACA_PAPER=false.")
+@click.option("--share-fallback/--no-share-fallback", default=True,
+              help="If a ticker isn't optionable, place a BUY share order sized to per-ticker budget. BULLISH-only.")
+@click.option("--fresh", is_flag=True, default=False,
+              help="Cold-start ML predictions instead of reusing the web server's cached DB predictions.")
+@click.option("--max-stale-min", type=int, default=30, show_default=True,
+              help="Refuse to use DB predictions older than this many minutes (unless --fresh).")
+def deploy_options(budget, tickers, subscriber, min_confidence, min_score,
+                    stop_loss_pct, trail_trigger_pct, trail_pct,
+                    confirm, live, share_fallback, fresh, max_stale_min):
+    """
+    Batch-deploy smart option orders across the monitor list.
+
+    SAFETY: Dry-run by default. Refuses live execution without --live.
+    Prompts Y/n per ticker even after --confirm. Refuses if <30 min to close.
+    Writes every intent + outcome to deploy_options.log.
+    """
+    db.init_db()
+
+    if not broker_mod.is_configured():
+        console.print("[red]Alpaca credentials not configured — set ALPACA_API_KEY / ALPACA_API_SECRET.[/red]")
+        return
+    is_paper_env = broker_mod.is_paper()
+    if not is_paper_env and not live:
+        console.print("[red]ALPACA_PAPER=false (LIVE account) but --live flag not passed. Refusing.[/red]")
+        console.print("[dim]Re-run with --live if you intend to trade real money.[/dim]")
+        return
+    if is_paper_env and live:
+        console.print("[yellow]Note: --live passed but ALPACA_PAPER=true — orders will still route to paper.[/yellow]")
+
+    mins_left = _minutes_to_market_close()
+    dry = not confirm
+    if mins_left is None:
+        if not dry:
+            console.print("[red]Market is closed. Refusing to submit DAY orders.[/red]")
+            return
+        console.print("[yellow]Market closed — dry-run only (submit would be refused).[/yellow]")
+    elif mins_left < 30:
+        if not dry:
+            console.print(f"[red]Only {mins_left} minute(s) to close — refusing (options at close are illiquid).[/red]")
+            return
+        console.print(f"[yellow]{mins_left} min to close — dry-run only (submit would be refused).[/yellow]")
+    else:
+        console.print(f"[dim]Market open — {mins_left} min to close.[/dim]")
+
+    symbols = [s.strip().upper() for s in tickers.split(",") if s.strip()]
+    if not symbols:
+        console.print("[red]No tickers supplied.[/red]")
+        return
+    per_ticker_budget = budget / len(symbols)
+
+    banner = "[bold red]LIVE[/bold red]" if (live and not is_paper_env) else "[cyan]PAPER[/cyan]"
+    mode_txt = "[dim]DRY-RUN[/dim]" if dry else "[bold]SUBMIT[/bold]"
+    console.print(f"\nDeploy plan  {banner}  {mode_txt}  budget=${budget:,.2f}  per-ticker=${per_ticker_budget:,.2f}")
+    console.print(f"Tickers ({len(symbols)}): {', '.join(symbols)}")
+    _log_deploy_action(
+        f"START budget={budget} per_ticker={per_ticker_budget:.2f} paper={is_paper_env} "
+        f"live_flag={live} confirm={confirm} tickers={symbols}"
+    )
+
+    plan_table = Table(title="Deploy Plan", border_style="cyan")
+    plan_table.add_column("Symbol")
+    plan_table.add_column("Signal")
+    plan_table.add_column("Conf")
+    plan_table.add_column("Action")
+    plan_table.add_column("Strike/Exp")
+    plan_table.add_column("Qty")
+    plan_table.add_column("Cost")
+    plan_table.add_column("Reason")
+
+    db_map: dict = {} if fresh else _db_signals_for(symbols)
+    if not fresh:
+        console.print(f"[dim]Signal source: DB (web server refresh). {len(db_map)}/{len(symbols)} present.[/dim]")
+    else:
+        console.print("[dim]Signal source: cold-start (--fresh).[/dim]")
+
+    intents: list[dict] = []
+    for sym in symbols:
+        if fresh:
+            sig = _fresh_signals_for(sym)
+        else:
+            sig = db_map.get(sym)
+            if sig is not None:
+                age_min = _minutes_since_iso(sig.get("last_updated"))
+                if age_min is not None and age_min > max_stale_min:
+                    plan_table.add_row(sym, "-", "-", "[red]skip[/red]", "-", "-", "-",
+                                        f"DB stale ({age_min}m > {max_stale_min}m); pass --fresh")
+                    continue
+
+        if sig is None:
+            reason = "not in DB (run web refresh or pass --fresh)" if not fresh else "no snapshot/history"
+            plan_table.add_row(sym, "-", "-", "[red]skip[/red]", "-", "-", "-", reason)
+            continue
+
+        signal = sig["signal"]
+        conf   = float(sig["confidence"])
+        price  = float(sig["price"])
+
+        if signal == "NEUTRAL":
+            plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]", "-", "-", "-", "neutral")
+            continue
+        if conf < min_confidence:
+            plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]", "-", "-", "-",
+                                f"conf < {min_confidence:.0%}")
+            continue
+
+        if opt_mod.is_optionable(sym, price):
+            recs = opt_mod.get_recommendations(
+                sym, price, signal, conf,
+                rsi=sig.get("rsi"), macd=sig.get("macd"),
+                change_pct=sig.get("change_pct"),
+                fib_signal=int(sig.get("fib_signal") or 0),
+                fib_level=sig.get("fib_level") or "",
+                top_n=1,
+            )
+            if not recs:
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]", "-", "-", "-",
+                                    "no option chain / no rec")
+                continue
+            rec = recs[0]
+            if float(rec["score"]) < min_score:
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]",
+                                    f"{rec['strike']}/{rec['expiry']}", "-", "-",
+                                    f"score {rec['score']:.0f} < {min_score:.0f}")
+                continue
+            ask = float(rec["ask"] or rec["last"] or 0)
+            if ask <= 0:
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]",
+                                    f"{rec['strike']}/{rec['expiry']}", "-", "-", "no ask price")
+                continue
+            per_contract_cost = ask * 100
+            qty = int(per_ticker_budget // per_contract_cost)
+            if qty < 1:
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]",
+                                    f"{rec['strike']}/{rec['expiry']}", "0",
+                                    f"${per_contract_cost:,.0f}", "1 contract > slice")
+                continue
+            cost   = qty * per_contract_cost
+            action = f"BUY {rec['type']}"
+            plan_table.add_row(sym, signal, f"{conf:.0%}", f"[green]{action}[/green]",
+                                f"{rec['strike']}/{rec['expiry']}", str(qty),
+                                f"${cost:,.0f}", rec.get("reason", ""))
+            intents.append({
+                "kind":        "option",
+                "symbol":      sym,
+                "opt_type":    rec["type"],
+                "strike":      float(rec["strike"]),
+                "expiry":      rec["expiry"],
+                "limit_price": round(ask, 2),
+                "qty":         qty,
+                "cost":        cost,
+                "signal":      signal,
+                "confidence":  conf,
+            })
+        else:
+            if not share_fallback:
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]", "-", "-", "-",
+                                    "not optionable, share fallback off")
+                continue
+            if signal != "BULLISH":
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]", "-", "-", "-",
+                                    "share fallback = BUY-only")
+                continue
+            share_qty = int(per_ticker_budget // price) if price > 0 else 0
+            if share_qty < 1:
+                plan_table.add_row(sym, signal, f"{conf:.0%}", "[dim]skip[/dim]", "-", "0",
+                                    f"${price:,.2f}", "1 share > slice")
+                continue
+            cost = share_qty * price
+            plan_table.add_row(sym, signal, f"{conf:.0%}", "[green]BUY SHARES[/green]", "-",
+                                str(share_qty), f"${cost:,.0f}", "not optionable → share fallback")
+            intents.append({
+                "kind":        "share",
+                "symbol":      sym,
+                "qty":         share_qty,
+                "price":       price,
+                "cost":        cost,
+                "signal":      signal,
+                "confidence":  conf,
+            })
+
+    console.print(plan_table)
+
+    if not intents:
+        console.print("[yellow]No qualifying signals to act on.[/yellow]")
+        _log_deploy_action("END no_intents")
+        return
+
+    total_planned = sum(i["cost"] for i in intents)
+    console.print(
+        f"\nPlanned deployments: {len(intents)}   Total: [bold]${total_planned:,.2f}[/bold] of ${budget:,.2f} budget"
+    )
+
+    if dry:
+        console.print("[dim]Dry-run only — pass --confirm to submit these orders.[/dim]")
+        _log_deploy_action(f"END dry_run intents={len(intents)} planned_total={total_planned:.2f}")
+        return
+
+    submitted, failed, skipped = 0, 0, 0
+    for it in intents:
+        prompt = (
+            f"\nSubmit {it['symbol']} {it.get('opt_type','SHARES')} "
+            f"qty={it['qty']} cost~=${it['cost']:,.0f}? [y/N] "
+        )
+        console.print(prompt, end="")
+        try:
+            ans = input().strip().lower()
+        except EOFError:
+            ans = "n"
+        if ans != "y":
+            skipped += 1
+            _log_deploy_action(f"SKIP user_declined {it}")
+            continue
+        try:
+            if it["kind"] == "option":
+                r = broker_mod.place_option_limit_order(
+                    it["symbol"], it["expiry"], it["strike"], it["opt_type"],
+                    it["qty"], it["limit_price"],
+                )
+                if r.get("ok"):
+                    mid = db.create_managed_option(
+                        subscriber_email  = subscriber,
+                        order_id          = r["id"],
+                        underlying        = it["symbol"],
+                        occ_symbol        = r["symbol"],
+                        expiry            = it["expiry"],
+                        strike            = it["strike"],
+                        opt_type          = it["opt_type"],
+                        qty               = it["qty"],
+                        entry_price       = it["limit_price"],
+                        stop_loss_pct     = stop_loss_pct,
+                        trail_trigger_pct = trail_trigger_pct,
+                        trail_pct         = trail_pct,
+                    )
+                    db.record_subscriber_order(r["id"], subscriber, it["symbol"])
+                    console.print(f"[green]OK[/green]  order={r['id']} managed_id={mid}")
+                    submitted += 1
+                    _log_deploy_action(f"SUBMIT_OK option {it} order_id={r['id']} managed_id={mid}")
+                else:
+                    console.print(f"[red]FAIL[/red] {r.get('error')}")
+                    failed += 1
+                    _log_deploy_action(f"SUBMIT_FAIL option {it} error={r.get('error')}")
+            else:
+                r = broker_mod.place_order(it["symbol"], it["qty"], "BUY")
+                if r.get("ok"):
+                    db.record_subscriber_order(r["id"], subscriber, it["symbol"])
+                    console.print(f"[green]OK[/green]  order={r['id']}")
+                    submitted += 1
+                    _log_deploy_action(f"SUBMIT_OK share {it} order_id={r['id']}")
+                else:
+                    console.print(f"[red]FAIL[/red] {r.get('error')}")
+                    failed += 1
+                    _log_deploy_action(f"SUBMIT_FAIL share {it} error={r.get('error')}")
+        except Exception as e:
+            console.print(f"[red]EXC[/red] {e}")
+            failed += 1
+            _log_deploy_action(f"SUBMIT_EXC {it} exc={e}")
+
+    console.print(f"\n[bold]Done.[/bold] submitted={submitted} failed={failed} skipped={skipped}")
+    _log_deploy_action(f"END submitted={submitted} failed={failed} skipped={skipped}")
+
+
 # ── knowledge base ────────────────────────────────────────────────────────────
 
 def _render_topic(key: str) -> bool:
