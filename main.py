@@ -382,7 +382,7 @@ def refresh_all(config: dict) -> None:
                                 )
                                 if _ae_r.get("ok"):
                                     _ae_fired += 1
-                                    print(f"[auto-execute] {_sym} {_pred['signal']} conf={_conf:.0%} → {_ae_r.get('status')}", flush=True)
+                                    print(f"[auto-execute] {_sym} {_pred['signal']} conf={_conf:.0%} => {_ae_r.get('status')}", flush=True)
                     if _ae_fired:
                         print(f"[auto-execute] fired {_ae_fired} orders", flush=True)
         except Exception as _aex:
@@ -454,7 +454,7 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
     on optionable (non-crypto, price >= $5) symbols.
     Emails subscribers when new contracts appear that weren't in the previous batch.
     """
-    MIN_CONF = 0.30   # works with rule-based signals; ML model raises this naturally
+    MIN_CONF = 0.25   # works with rule-based signals; ML model raises this naturally
 
     all_signals = [s for s in stocks if s.get("prediction") in ("BULLISH", "BEARISH")]
     candidates  = [
@@ -463,7 +463,7 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
         and opt_mod.is_optionable(s["symbol"], s.get("price") or 0)
     ]
 
-    print(f"[options] {len(all_signals)} BULL/BEAR signals, {len(candidates)} optionable ≥{MIN_CONF*100:.0f}% conf")
+    print(f"[options] {len(all_signals)} BULL/BEAR signals, {len(candidates)} optionable >={MIN_CONF*100:.0f}% conf")
 
     # Snapshot the current DB recs BEFORE clearing — used to detect new arrivals
     prev_recs = db.get_option_recs(40)
@@ -491,9 +491,9 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
                 fib_level=s.get("fib_level", ""),
             )
             if recs:
-                print(f"[options] {s['symbol']} → {len(recs)} {s['prediction']} recs (score {recs[0]['score']:.0f})")
+                print(f"[options] {s['symbol']} => {len(recs)} {s['prediction']} recs (score {recs[0]['score']:.0f})")
             else:
-                print(f"[options] {s['symbol']} conf={s.get('prediction_confidence',0):.2f} {s.get('prediction')} → no recs")
+                print(f"[options] {s['symbol']} conf={s.get('prediction_confidence',0):.2f} {s.get('prediction')} => no recs")
             all_recs.extend(recs)
         except Exception as e:
             print(f"[options] {s['symbol']} error: {e}")
@@ -1195,11 +1195,12 @@ def serve(host, port, http_port, no_tls):
 
     threading.Thread(target=_bg_refresh_loop, daemon=True).start()
 
-    # ── Alpaca trade stream (fills) ───────────────────────────────────────────
+    # ── Alpaca trade stream (fills) + broker read cache ──────────────────────
     try:
         broker_mod.start_trade_stream()
+        broker_mod.start_broker_refresher()
         if broker_mod.is_configured():
-            print("[broker] trade stream started", flush=True)
+            print("[broker] trade stream + refresher started", flush=True)
     except Exception as _bse:
         print(f"[broker] trade stream start error: {_bse}", flush=True)
 

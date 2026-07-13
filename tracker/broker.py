@@ -10,6 +10,8 @@ WARNING: setting ALPACA_PAPER=false submits real orders with real money.
 """
 
 import os
+import threading
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -31,6 +33,74 @@ def _client():
     )
 
 
+# ── Broker read cache (Flask handlers never block on Alpaca REST) ─────────────
+#
+# Historical incident: on 2026-07-13 the dashboard route did synchronous
+# get_positions()+get_account() calls per request. Alpaca connectivity glitched,
+# every request blocked ~30-300s until timeout, and Flask's worker pool
+# saturated — the whole site went unresponsive. Now a background thread does
+# the blocking calls and Flask handlers only read from the in-memory cache.
+_broker_cache: dict = {
+    "positions":   [],
+    "account":     None,
+    "orders_open": [],
+    "last_ok":     0.0,
+    "last_err":    "",
+}
+_broker_refresh_lock = threading.Lock()
+_broker_refresher_started = False
+_BROKER_REFRESH_S = 15  # background poll interval
+
+
+def _ensure_broker_refresher() -> None:
+    """Idempotently start the background refresher thread on first cached read."""
+    global _broker_refresher_started
+    if _broker_refresher_started or not is_configured():
+        return
+    with _broker_refresh_lock:
+        if _broker_refresher_started:
+            return
+        _broker_refresher_started = True
+
+        def _loop() -> None:
+            while True:
+                try:
+                    _broker_cache["positions"]   = _fetch_positions()
+                    _broker_cache["account"]     = _fetch_account()
+                    _broker_cache["orders_open"] = _fetch_orders("open")
+                    _broker_cache["last_ok"]     = time.time()
+                    _broker_cache["last_err"]    = ""
+                except Exception as e:
+                    _broker_cache["last_err"] = str(e)
+                time.sleep(_BROKER_REFRESH_S)
+
+        threading.Thread(target=_loop, daemon=True, name="broker-refresher").start()
+
+
+def invalidate_broker_cache() -> None:
+    """Kick off an immediate refresh (best-effort, non-blocking) after a mutation.
+    Runs the refetches in a one-shot thread so the request thread returns fast.
+    """
+    if not is_configured():
+        return
+
+    def _refresh_once() -> None:
+        try:
+            _broker_cache["positions"]   = _fetch_positions()
+            _broker_cache["orders_open"] = _fetch_orders("open")
+            _broker_cache["account"]     = _fetch_account()
+            _broker_cache["last_ok"]     = time.time()
+        except Exception as e:
+            _broker_cache["last_err"] = str(e)
+
+    threading.Thread(target=_refresh_once, daemon=True, name="broker-invalidate").start()
+
+
+def start_broker_refresher() -> None:
+    """Public entry: warm the cache at startup instead of on first request."""
+    _ensure_broker_refresher()
+
+
 def place_order(symbol: str, qty: float, side: str) -> dict:
     """
     Submit a day market order.
@@ -50,6 +120,7 @@ def place_order(symbol: str, qty: float, side: str) -> dict:
             time_in_force=TimeInForce.DAY,
         )
         order = _client().submit_order(req)
+        invalidate_broker_cache()
         return {
             "ok":     True,
             "id":     str(order.id),
@@ -63,8 +134,8 @@ def place_order(symbol: str, qty: float, side: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def get_positions() -> list[dict]:
-    """Return all open positions or [] on error / not configured."""
+def _fetch_positions() -> list[dict]:
+    """Live REST call — blocks until Alpaca responds. Use get_positions() from Flask handlers."""
     if not is_configured():
         return []
     try:
@@ -84,8 +155,8 @@ def get_positions() -> list[dict]:
         return []
 
 
-def get_account() -> Optional[dict]:
-    """Return account summary or None on error / not configured."""
+def _fetch_account() -> Optional[dict]:
+    """Live REST call — blocks until Alpaca responds. Use get_account() from Flask handlers."""
     if not is_configured():
         return None
     try:
@@ -98,6 +169,18 @@ def get_account() -> Optional[dict]:
         }
     except Exception:
         return None
+
+
+def get_positions() -> list[dict]:
+    """Cached; non-blocking. Refreshed by the broker refresher thread."""
+    _ensure_broker_refresher()
+    return list(_broker_cache["positions"])
+
+
+def get_account() -> Optional[dict]:
+    """Cached; non-blocking. Refreshed by the broker refresher thread."""
+    _ensure_broker_refresher()
+    return _broker_cache["account"]
 
 
 def place_limit_order(symbol: str, qty: float, side: str, limit_price: float) -> dict:
@@ -119,6 +202,7 @@ def place_limit_order(symbol: str, qty: float, side: str, limit_price: float) ->
             limit_price=limit_price,
         )
         order = _client().submit_order(req)
+        invalidate_broker_cache()
         return {"ok": True, "id": str(order.id), "status": str(order.status),
                 "symbol": order.symbol, "qty": float(order.qty or qty),
                 "side": side.upper(), "paper": is_paper(), "type": "limit",
@@ -148,6 +232,7 @@ def place_stop_limit_order(symbol: str, qty: float, side: str,
             stop_price=stop_price,
         )
         order = _client().submit_order(req)
+        invalidate_broker_cache()
         return {"ok": True, "id": str(order.id), "status": str(order.status),
                 "symbol": order.symbol, "qty": float(order.qty or qty),
                 "side": side.upper(), "paper": is_paper(), "type": "stop_limit",
@@ -183,6 +268,7 @@ def place_trailing_stop_order(symbol: str, qty: float, side: str,
         else:
             kwargs["trail_price"] = trail_price
         order = _client().submit_order(TrailingStopOrderRequest(**kwargs))
+        invalidate_broker_cache()
         return {"ok": True, "id": str(order.id), "status": str(order.status),
                 "symbol": order.symbol, "qty": float(order.qty or qty),
                 "side": side.upper(), "paper": is_paper(), "type": "trailing_stop",
@@ -191,8 +277,8 @@ def place_trailing_stop_order(symbol: str, qty: float, side: str,
         return {"ok": False, "error": str(e)}
 
 
-def get_orders(status: str = "open") -> list[dict]:
-    """Return open/all orders. status = 'open' | 'all' | 'closed'."""
+def _fetch_orders(status: str = "open") -> list[dict]:
+    """Live REST call — blocks until Alpaca responds. Use get_orders() from Flask handlers."""
     if not is_configured():
         return []
     try:
@@ -225,12 +311,23 @@ def get_orders(status: str = "open") -> list[dict]:
         return []
 
 
+def get_orders(status: str = "open") -> list[dict]:
+    """Cached; non-blocking. status = 'open' | 'all' | 'closed'.
+    Only 'open' is prefetched by the refresher; 'all'/'closed' fall back to a live call.
+    """
+    _ensure_broker_refresher()
+    if status == "open":
+        return list(_broker_cache["orders_open"])
+    return _fetch_orders(status)
+
+
 def cancel_order(order_id: str) -> dict:
     """Cancel an order by ID. Returns {ok, id}."""
     if not is_configured():
         return {"ok": False, "error": "Alpaca credentials not configured"}
     try:
         _client().cancel_order_by_id(order_id)
+        invalidate_broker_cache()
         return {"ok": True, "id": order_id}
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -365,6 +462,7 @@ def place_option_limit_order(underlying: str, expiry: str, strike: float,
             limit_price=limit_price,
         )
         order = _client().submit_order(req)
+        invalidate_broker_cache()
         return {
             "ok":          True,
             "id":          str(order.id),
@@ -409,6 +507,7 @@ def close_option_position(occ_symbol: str, qty: int, current_bid: float) -> dict
                 time_in_force=TimeInForce.DAY,
             )
         order = _client().submit_order(req)
+        invalidate_broker_cache()
         return {
             "ok":     True,
             "id":     str(order.id),
