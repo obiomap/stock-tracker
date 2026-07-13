@@ -248,7 +248,7 @@ def refresh_all(config: dict) -> None:
                 db.upsert_stock(stock_row)
                 stocks_out.append(stock_row)
                 if sym == "NVTS":
-                    print(f"[refresh] NVTS: ✓ upsert complete, price={stock_row.get('price')}")
+                    print(f"[refresh] NVTS: [OK] upsert complete, price={stock_row.get('price')}")
             except Exception as _e:
                 print(f"[refresh] {sym}: exception — {_e}")
 
