@@ -358,54 +358,150 @@ def auto_execute_signal(symbol: str, signal: str, confidence: float,
 
 # ── Real-time trade stream (fills via Alpaca websocket) ────────────────────────
 
-_stream_state: dict = {"fills": [], "running": False, "errors": 0}
+_stream_state: dict = {
+    "fills":       [],
+    "running":     False,
+    "errors":      0,
+    "reconnects":  0,
+    "last_error":  "",
+    "started_at":  0.0,
+}
+
+_STREAM_BACKOFF_START_S = 2.0
+_STREAM_BACKOFF_MAX_S   = 300.0
+_STREAM_STABLE_S        = 60.0   # if run() stays alive >= this, reset backoff
+_ALPACA_LOG_WINDOW_S    = 60.0   # coalesce identical log records within this window
+
+
+class _RateLimitFilter:
+    """Logging filter that suppresses repeats of the same message within a window.
+
+    The Alpaca SDK's trading-stream reconnect loop calls log.exception() on
+    every failed connect. During a network outage that produces a flood of
+    identical multi-line tracebacks in the deploy log. This filter keeps the
+    first occurrence per window and drops the rest, annotating the next
+    surviving record with the suppressed count.
+    """
+    def __init__(self, window_s: float) -> None:
+        self.window_s   = window_s
+        self._last_ts:   dict = {}
+        self._suppressed: dict = {}
+
+    def filter(self, record) -> bool:  # noqa: A003 — logging Filter API
+        key = f"{record.levelno}|{record.name}|{str(record.msg)[:120]}"
+        now = time.time()
+        last = self._last_ts.get(key, 0.0)
+        if now - last < self.window_s:
+            self._suppressed[key] = self._suppressed.get(key, 0) + 1
+            return False
+        n = self._suppressed.pop(key, 0)
+        if n:
+            record.msg = f"{record.msg}  (+{n} similar suppressed in last {int(self.window_s)}s)"
+        self._last_ts[key] = now
+        return True
+
+
+_alpaca_logging_configured = False
+
+
+def _configure_alpaca_logging() -> None:
+    """Attach a rate-limit filter to the alpaca stream logger to suppress flood.
+
+    log.exception() and log.warning() from alpaca.trading.stream._run_forever
+    fire on every reconnect attempt during an Alpaca outage — this collapses
+    identical messages within the window.
+    """
+    global _alpaca_logging_configured
+    if _alpaca_logging_configured:
+        return
+    _alpaca_logging_configured = True
+    import logging as _logging
+    flt = _RateLimitFilter(window_s=_ALPACA_LOG_WINDOW_S)
+    for name in ("alpaca", "alpaca.trading.stream", "websockets"):
+        _logging.getLogger(name).addFilter(flt)
 
 
 def get_recent_fills() -> list[dict]:
     return list(_stream_state["fills"])
 
 
+def get_stream_state() -> dict:
+    """Snapshot of the trade-stream supervisor state (for debug/observability)."""
+    return {k: v for k, v in _stream_state.items() if k != "fills"}
+
+
 def start_trade_stream() -> None:
-    """Start Alpaca TradingStream in a background daemon thread to capture fills."""
+    """Start Alpaca TradingStream in a background daemon thread with supervisor.
+
+    - The SDK's ts.run() has its own internal reconnect loop; if it ever exits
+      or crashes fully, the supervisor restarts it with exponential backoff
+      (2s → 4s → ... → 300s cap). Backoff resets after ~60s of stable running.
+    - Alpaca SDK log noise from failed reconnects is rate-limited to at most
+      one identical record per _ALPACA_LOG_WINDOW_S window.
+    - Fill events trigger invalidate_broker_cache() so positions/account
+      reflect the fill within ~1s instead of waiting for the 15s refresher.
+    """
     if not is_configured() or _stream_state["running"]:
         return
-    import threading
+
+    _configure_alpaca_logging()
 
     def _run() -> None:
-        _stream_state["running"] = True
-        try:
-            from alpaca.trading.stream import TradingStream
+        backoff = _STREAM_BACKOFF_START_S
 
-            async def _on_update(data) -> None:
-                try:
-                    event = str(getattr(data, "event", "")).lower()
-                    if event in ("fill", "partial_fill"):
-                        order = getattr(data, "order", None)
-                        fill = {
-                            "ts":     str(getattr(data, "timestamp", ""))[:19],
-                            "symbol": str(order.symbol) if order else "?",
-                            "side":   str(order.side).upper() if order else "?",
-                            "qty":    float(getattr(order, "filled_qty", 0) or 0),
-                            "price":  float(getattr(data, "price", 0) or 0),
-                            "event":  event,
-                        }
-                        _stream_state["fills"] = (_stream_state["fills"] + [fill])[-50:]
-                except Exception:
-                    pass
+        async def _on_update(data) -> None:
+            try:
+                event = str(getattr(data, "event", "")).lower()
+                if event in ("fill", "partial_fill"):
+                    order = getattr(data, "order", None)
+                    fill = {
+                        "ts":     str(getattr(data, "timestamp", ""))[:19],
+                        "symbol": str(order.symbol) if order else "?",
+                        "side":   str(order.side).upper() if order else "?",
+                        "qty":    float(getattr(order, "filled_qty", 0) or 0),
+                        "price":  float(getattr(data, "price", 0) or 0),
+                        "event":  event,
+                    }
+                    _stream_state["fills"] = (_stream_state["fills"] + [fill])[-50:]
+                    invalidate_broker_cache()
+            except Exception:
+                pass
 
-            ts = TradingStream(
-                os.environ["ALPACA_API_KEY"],
-                os.environ["ALPACA_API_SECRET"],
-                paper=is_paper(),
-            )
-            ts.subscribe_trade_updates(_on_update)
-            ts.run()
-        except Exception as e:
-            _stream_state["running"] = False
-            _stream_state["errors"] += 1
-            print(f"[broker] trade stream error: {e}", flush=True)
+        while True:
+            try:
+                from alpaca.trading.stream import TradingStream
+                ts = TradingStream(
+                    os.environ["ALPACA_API_KEY"],
+                    os.environ["ALPACA_API_SECRET"],
+                    paper=is_paper(),
+                )
+                ts.subscribe_trade_updates(_on_update)
 
-    threading.Thread(target=_run, daemon=True).start()
+                _stream_state["running"]    = True
+                _stream_state["started_at"] = time.time()
+                ts.run()   # blocks; SDK's internal loop handles most retries
+                # If ts.run() returns, the internal loop exited — supervise a restart
+                _stream_state["running"] = False
+                _stream_state["reconnects"] += 1
+            except Exception as e:
+                _stream_state["running"] = False
+                _stream_state["errors"] += 1
+                _stream_state["last_error"] = f"{type(e).__name__}: {e}"
+                # Rate-limited via our filter (this goes through our own logger)
+                import logging as _logging
+                _logging.getLogger("alpaca.trading.stream").error(
+                    "supervisor: trade stream run() raised %s: %s",
+                    type(e).__name__, e,
+                )
+
+            # Reset backoff if the last run held together for a while
+            uptime = time.time() - _stream_state.get("started_at", 0.0)
+            if uptime >= _STREAM_STABLE_S:
+                backoff = _STREAM_BACKOFF_START_S
+            time.sleep(backoff)
+            backoff = min(backoff * 2, _STREAM_BACKOFF_MAX_S)
+
+    threading.Thread(target=_run, daemon=True, name="broker-trade-stream").start()
 
 
 # ── Options trading ────────────────────────────────────────────────────────────
