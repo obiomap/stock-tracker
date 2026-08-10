@@ -446,6 +446,17 @@ def start_trade_stream() -> None:
 
     _configure_alpaca_logging()
 
+    # Warm the import cache single-threaded before spawning any background
+    # threads. alpaca.trading.stream and alpaca.trading.client share import
+    # dependencies; if two threads race to import them for the first time
+    # (this thread's TradingStream import vs. the refresher thread's
+    # TradingClient import in _client()), CPython's import lock can catch
+    # them in a lock-ordering cycle and raise _DeadlockError. Importing both
+    # here, before start_broker_refresher() spawns its thread, means later
+    # imports are just sys.modules lookups — no lock contention possible.
+    import alpaca.trading.client  # noqa: F401
+    import alpaca.trading.stream  # noqa: F401
+
     def _run() -> None:
         backoff = _STREAM_BACKOFF_START_S
 
