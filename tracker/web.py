@@ -3035,7 +3035,7 @@ def create_app() -> Flask:
 
         def _opt_rows(recs: list[dict], opt_type: str) -> str:
             if not recs:
-                return f'<tr><td colspan="9" class="opt-empty">No {opt_type} recommendations yet — data refreshes every 5 minutes</td></tr>'
+                return f'<tr><td colspan="12" class="opt-empty">No {opt_type} recommendations yet — data refreshes every 5 minutes</td></tr>'
             rows = ""
             for r in recs:
                 sym    = r.get("symbol", "")
