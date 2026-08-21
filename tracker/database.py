@@ -327,12 +327,24 @@ def upsert_earnings(data: dict) -> None:
 
 
 def get_upcoming_earnings() -> list[dict]:
+    """Rows whose earnings_date is today or later, with days_until recomputed
+    live -- the stored is_upcoming/days_until columns go stale once a symbol's
+    old earnings row stops being refreshed (yfinance rolls it to a new date)."""
+    today = datetime.now().date()
     with get_connection() as conn:
         rows = conn.execute("""
-            SELECT * FROM earnings WHERE is_upcoming=1
-            ORDER BY days_until ASC
-        """).fetchall()
-    return [dict(r) for r in rows]
+            SELECT * FROM earnings WHERE earnings_date >= ?
+            ORDER BY earnings_date ASC
+        """, (today.isoformat(),)).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["days_until"] = (datetime.strptime(d["earnings_date"], "%Y-%m-%d").date() - today).days
+        except (ValueError, TypeError):
+            pass
+        result.append(d)
+    return result
 
 
 def log_alert(alert_type: str, symbol: str, message: str, severity: str, email_sent: bool = False) -> None:
