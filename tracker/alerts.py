@@ -291,10 +291,65 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     sec_focus = corr_mod.build_focus_html_section(stocks, _focus_syms)
     sec_news  = news_mod.build_news_html_section(news_signals or {})
 
-    # ── 1. AI TOP SIGNALS ─────────────────────────────────────────────────────
     sig_color = {"BULLISH": "#22c55e", "BEARISH": "#ef4444"}
     sig_bg    = {"BULLISH": "#14532d", "BEARISH": "#7f1d1d"}
 
+    # ── EARNINGS CALENDAR ─────────────────────────────────────────────────────
+    # Advance notice of upcoming earnings prints, paired with the current AI
+    # signal for that ticker and its historical average post-earnings reaction.
+    stock_by_sym = {s["symbol"]: s for s in stocks}
+    upcoming_earn = sorted(
+        [e for e in (earnings or []) if (e.get("days_until") or 0) >= 0],
+        key=lambda e: e.get("days_until") or 999,
+    )
+
+    rows_earn = ""
+    for i, e in enumerate(upcoming_earn[:10]):
+        sym  = e["symbol"]
+        disp = sym.replace("-USD", "")
+        days = e.get("days_until")
+        alt  = "#172033" if i % 2 else "#1e293b"
+
+        days_color = "#f87171" if (days or 0) <= 1 else ("#fcd34d" if (days or 0) <= 3 else "#94a3b8")
+        eps  = e.get("eps_estimate")
+        eps_str = f"${eps:.2f}" if eps is not None else "—"
+
+        rxn = e.get("avg_reaction_pct")
+        if rxn is not None:
+            rxn_color = "#22c55e" if rxn >= 0 else "#ef4444"
+            rxn_str = f'<span style="color:{rxn_color};font-weight:600">{rxn:+.1f}%</span>'
+        else:
+            rxn_str = '<span style="color:#475569">—</span>'
+
+        s = stock_by_sym.get(sym, {})
+        pred = s.get("prediction", "NEUTRAL")
+        conf = s.get("prediction_confidence") or 0
+        if pred in ("BULLISH", "BEARISH"):
+            sig_str = (f'<span style="background:{sig_bg.get(pred,"#1e293b")};color:{sig_color.get(pred,"#94a3b8")};'
+                       f'padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700">'
+                       f'{pred} {conf*100:.0f}%</span>')
+        else:
+            sig_str = '<span style="color:#475569;font-size:12px">NEUTRAL</span>'
+
+        rows_earn += (
+            f'<tr style="background:{alt}">'
+            f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
+            f'<td style="padding:10px 14px;text-align:center;color:#cbd5e1">{e.get("earnings_date","—")}</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:{days_color}">'
+            f'{"today" if days == 0 else f"{days}d"}</td>'
+            f'<td style="padding:10px 14px;text-align:right;color:#e2e8f0">{eps_str}</td>'
+            f'<td style="padding:10px 14px;text-align:center">{rxn_str}</td>'
+            f'<td style="padding:10px 14px;text-align:center">{sig_str}</td>'
+            f'</tr>'
+        )
+    if not rows_earn:
+        rows_earn = _empty_row(6, "No earnings scheduled in the lookout window")
+
+    hdr_earn = (_th("Symbol") + _th("Date", "center") + _th("In", "center") +
+                _th("EPS Est.", "right") + _th("Avg Reaction", "center") + _th("AI Signal", "center"))
+    sec_earn = _section("&#x1F4B0;", "Upcoming Earnings", hdr_earn, rows_earn)
+
+    # ── 1. AI TOP SIGNALS ─────────────────────────────────────────────────────
     ai_stocks = [
         s for s in stocks
         if s.get("prediction") in ("BULLISH", "BEARISH")
@@ -485,6 +540,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
 
   {sec_focus}
   {sec_news}
+  {sec_earn}
   {sec_ai}
   {sec_vol}
   {sec_movers}

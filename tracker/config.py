@@ -350,7 +350,7 @@ DEFAULT_CONFIG = {
         "price_change_threshold": 3.0,
         "rsi_overbought": 70,
         "rsi_oversold": 30,
-        "earnings_alert_days": 3,
+        "earnings_alert_days": 7,
         "ml_confidence_threshold": 0.70,
         "volume_spike_ratio": 2.0,
     },
