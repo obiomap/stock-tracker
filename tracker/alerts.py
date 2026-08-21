@@ -324,7 +324,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
         s = stock_by_sym.get(sym, {})
         pred = s.get("prediction", "NEUTRAL")
         conf = s.get("prediction_confidence") or 0
-        if pred in ("BULLISH", "BEARISH"):
+        if pred in ("BULLISH", "BEARISH") and conf >= 0.50:
             sig_str = (f'<span style="background:{sig_bg.get(pred,"#1e293b")};color:{sig_color.get(pred,"#94a3b8")};'
                        f'padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700">'
                        f'{pred} {conf*100:.0f}%</span>')
