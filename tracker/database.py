@@ -312,7 +312,14 @@ def get_all_stocks() -> list[dict]:
 
 
 def upsert_earnings(data: dict) -> None:
+    """A symbol has exactly one 'next earnings' at a time -- if a prior refresh
+    stored a different date for this symbol (yfinance's estimate drifted a day
+    or two), drop that row so it doesn't linger as a duplicate entry."""
     with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM earnings WHERE symbol=:symbol AND earnings_date != :earnings_date",
+            data,
+        )
         conn.execute("""
             INSERT INTO earnings VALUES (
                 :symbol, :earnings_date, :eps_estimate, :actual_eps,
