@@ -244,6 +244,11 @@ def refresh_all(config: dict) -> None:
                     "adx":               ind_data.get("adx"),
                     "pct_from_52w_high": ind_data.get("pct_from_52w_high"),
                     "pct_from_52w_low":  ind_data.get("pct_from_52w_low"),
+                    # Extra fields for options target-price/expiry selection (not stored in DB)
+                    "atr_pct":           ind_data.get("atr_pct"),
+                    "prob_3d":           prediction.get("prob_3d"),
+                    "prob_5d":           prediction.get("prob_5d"),
+                    "prob_10d":          prediction.get("prob_10d"),
                 }
                 db.upsert_stock(stock_row)
                 stocks_out.append(stock_row)
@@ -489,6 +494,10 @@ def _refresh_options(stocks: list[dict], config: dict) -> None:
                 change_pct=s.get("change_pct"),
                 fib_signal=s.get("fib_signal", 0),
                 fib_level=s.get("fib_level", ""),
+                atr_pct=s.get("atr_pct"),
+                prob_3d=s.get("prob_3d"),
+                prob_5d=s.get("prob_5d"),
+                prob_10d=s.get("prob_10d"),
             )
             if recs:
                 print(f"[options] {s['symbol']} => {len(recs)} {s['prediction']} recs (score {recs[0]['score']:.0f})")

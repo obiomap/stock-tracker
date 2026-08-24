@@ -109,6 +109,9 @@ def init_db() -> None:
                 confidence REAL,
                 reason TEXT,
                 current_price REAL,
+                target_price REAL,
+                target_days INTEGER,
+                pop REAL,
                 created_at TEXT
             );
 
@@ -195,6 +198,18 @@ def _migrate_columns() -> None:
             conn.execute("ALTER TABLE stocks ADD COLUMN supply_zone REAL")
         if stock_cols and "poc_price" not in stock_cols:
             conn.execute("ALTER TABLE stocks ADD COLUMN poc_price REAL")
+        # options_recs table
+        try:
+            opt_cols = [r[1] for r in conn.execute("PRAGMA table_info(options_recs)").fetchall()]
+            if opt_cols:
+                if "target_price" not in opt_cols:
+                    conn.execute("ALTER TABLE options_recs ADD COLUMN target_price REAL")
+                if "target_days" not in opt_cols:
+                    conn.execute("ALTER TABLE options_recs ADD COLUMN target_days INTEGER")
+                if "pop" not in opt_cols:
+                    conn.execute("ALTER TABLE options_recs ADD COLUMN pop REAL")
+        except Exception:
+            pass
         # subscribers table
         try:
             sub_cols = [r[1] for r in conn.execute("PRAGMA table_info(subscribers)").fetchall()]
@@ -596,12 +611,13 @@ def upsert_option_recs(recs: list[dict]) -> None:
                 INSERT INTO options_recs
                     (symbol, opt_type, strike, expiry, days_out, bid, ask,
                      last_price, iv, open_interest, volume, score, confidence,
-                     reason, current_price, created_at)
+                     reason, current_price, target_price, target_days, pop, created_at)
                 VALUES
                     (:symbol, :type, :strike, :expiry, :days_out, :bid, :ask,
                      :last, :iv, :open_interest, :volume, :score, :confidence,
-                     :reason, :current_price, :created_at)
-            """, {**r, "created_at": now})
+                     :reason, :current_price, :target_price, :target_days, :pop, :created_at)
+            """, {"target_price": None, "target_days": None, "pop": None,
+                  **r, "created_at": now})
 
 
 def get_option_recs(limit: int = 40) -> list[dict]:

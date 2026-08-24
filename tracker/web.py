@@ -3035,7 +3035,7 @@ def create_app() -> Flask:
 
         def _opt_rows(recs: list[dict], opt_type: str) -> str:
             if not recs:
-                return f'<tr><td colspan="12" class="opt-empty">No {opt_type} recommendations yet — data refreshes every 5 minutes</td></tr>'
+                return f'<tr><td colspan="13" class="opt-empty">No {opt_type} recommendations yet — data refreshes every 5 minutes</td></tr>'
             rows = ""
             for r in recs:
                 sym    = r.get("symbol", "")
@@ -3051,6 +3051,8 @@ def create_app() -> Flask:
                 sc     = r.get("score") or 0
                 reason = r.get("reason", "")
                 cprice = r.get("current_price") or 0
+                target = r.get("target_price") or 0
+                pop    = r.get("pop")
 
                 badge = (f'<span class="opt-badge-call">CALL</span>'
                          if opt_type == "CALL"
@@ -3063,6 +3065,8 @@ def create_app() -> Flask:
                 bid_ask = f"${bid:.2f} / ${ask:.2f}" if bid or ask else "—"
                 last_str= f"${last:.2f}" if last else "—"
                 days_str= f"{days}d" if days else "—"
+                target_str = f"${target:.2f}" if target else "—"
+                pop_str = f"{pop*100:.0f}%" if pop is not None else "—"
 
                 chart_url = (
                     f"/option-chart.png?t={opt_type}"
@@ -3074,6 +3078,7 @@ def create_app() -> Flask:
                     f'<td style="text-align:right">{badge}</td>'
                     f'<td style="text-align:right">${cprice:.2f}</td>'
                     f'<td style="text-align:right">${strike:.2f}</td>'
+                    f'<td style="text-align:right">{target_str} <span style="color:rgba(255,255,255,.35)">({pop_str} POP)</span></td>'
                     f'<td style="text-align:right">{expiry} <span style="color:rgba(255,255,255,.35)">({days_str})</span></td>'
                     f'<td style="text-align:right">{last_str}</td>'
                     f'<td style="text-align:right">{bid_ask}</td>'
@@ -3084,7 +3089,7 @@ def create_app() -> Flask:
                     f'<td class="opt-reason">{reason}</td>'
                     f'</tr>'
                     f'<tr style="background:rgba(0,0,0,.25)">'
-                    f'<td colspan="12" style="padding:8px 14px 12px">'
+                    f'<td colspan="13" style="padding:8px 14px 12px">'
                     f'<img src="{chart_url}" alt="Payoff chart" '
                     f'width="572" height="149" '
                     f'style="display:block;border-radius:6px;max-width:100%;height:auto"/>'
@@ -3097,6 +3102,7 @@ def create_app() -> Flask:
             '<th style="text-align:right">Type</th>'
             '<th style="text-align:right">Stock&nbsp;Price</th>'
             '<th style="text-align:right">Strike</th>'
+            '<th style="text-align:right">Target&nbsp;(POP)</th>'
             '<th style="text-align:right">Expiry</th>'
             '<th style="text-align:right">Last</th>'
             '<th style="text-align:right">Bid&nbsp;/&nbsp;Ask</th>'
