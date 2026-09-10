@@ -6,9 +6,12 @@ NGX (Nigerian Exchange) and African market intelligence:
   - Low-liquidity confidence adjustment for LSE-listed African stocks
 """
 
+import logging
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 _CACHE: dict = {}
 
@@ -33,7 +36,7 @@ def fetch_usdngn() -> dict:
             chg = round((rate - prev) / prev * 100, 3) if prev > 0 else None
             result = {"rate": round(rate, 2), "change_pct": chg}
     except Exception:
-        pass
+        log.debug("fetch_usdngn: USDNGN=X fetch failed", exc_info=True)
     _CACHE[key] = {"data": result, "ts": time.time()}
     return result
 
