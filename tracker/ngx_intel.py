@@ -7,11 +7,21 @@ NGX (Nigerian Exchange) and African market intelligence:
 """
 
 import logging
+import os
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+# NGX_DEBUG=1 (Railway var, no redeploy needed) turns on DEBUG-level logging
+# for this module only, e.g. USD/NGN fetch failures. Default is silent.
+if os.environ.get("NGX_DEBUG"):
+    log.setLevel(logging.DEBUG)
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    log.addHandler(_h)
+    log.propagate = False
 
 _CACHE: dict = {}
 
