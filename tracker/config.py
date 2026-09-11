@@ -96,6 +96,13 @@ DEFAULT_CONFIG = {
         "VWO", "KSA",
         # Nigerian / African stocks (London-listed, Yahoo Finance supported)
         "AAF.L", "SEPL.L",
+        # TODO: Dangote Petroleum Refinery IPO — subscription 14 Sep-13 Oct 2026,
+        # NGX listing expected late Nov 2026 under ticker DANGREF (unconfirmed).
+        # Add once listed AND confirm yfinance actually carries a quote for it —
+        # this tracker has no working direct-NGX feed today (see ngx_intel.py),
+        # only LSE-listed African names like AAF.L/SEPL.L above. If yfinance has
+        # no NGX coverage, wait for the planned LSE secondary listing instead
+        # (within ~3 years of IPO) and add that under the usual ".L" suffix.
         # Thematic & Leveraged ETFs
         "SOXL", "TQQQ", "UPRO",                             # Leveraged (3x Semis, QQQ, S&P 500)
         "ICLN", "LIT", "DRIV",                              # Clean energy, Lithium/Battery, EV/Auto

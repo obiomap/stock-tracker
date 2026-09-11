@@ -563,6 +563,9 @@ SECTOR_CATALOG: dict[str, dict] = {
         "stocks": {
             "AAF.L":  "Airtel Africa — pan-African telecoms and mobile money (14 countries)",
             "SEPL.L": "Seplat Energy — Nigeria's largest independent oil & gas producer",
+            # "DANGREF": "Dangote Petroleum Refinery — 700k bpd (1.4m bpd by 2029),
+            #   NGX listing expected late Nov 2026. Add once listed and confirmed
+            #   fetchable via yfinance (see TODO in config.py watchlist).",
         },
     },
     "Cryptocurrency": {
