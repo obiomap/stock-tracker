@@ -9,6 +9,7 @@ Configure via environment variables (set in Railway or .env):
 WARNING: setting ALPACA_PAPER=false submits real orders with real money.
 """
 
+import asyncio
 import os
 import threading
 import time
@@ -456,6 +457,36 @@ def start_trade_stream() -> None:
     # imports are just sys.modules lookups — no lock contention possible.
     import alpaca.trading.client  # noqa: F401
     import alpaca.trading.stream  # noqa: F401
+    from alpaca.trading.stream import TradingStream
+
+    class _BackoffTradingStream(TradingStream):
+        """TradingStream with real backoff on failed connects.
+
+        Incident 2026-09-15: alpaca-py's internal _run_forever() sleeps only
+        10ms between retries after a failed _start_ws() (connect+auth) —
+        the DNS resolution timeout raised by websockets_legacy.connect()
+        isn't a websockets.WebSocketException, so it hits the generic
+        except-branch which does no backoff at all. During a DNS/network
+        outage this busy-loops connect attempts ~100x/sec, each queuing a
+        DNS lookup faster than it can time out; the backlog of pending
+        futures grew unbounded and pegged the container's memory at its
+        8GB limit for ~2 days before anyone noticed the site was down. We
+        can't change the SDK's sleep, so we slow the failing call itself
+        down before letting it re-raise into _run_forever().
+        """
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self._connect_failures = 0
+
+        async def _start_ws(self) -> None:
+            try:
+                await super()._start_ws()
+                self._connect_failures = 0
+            except Exception:
+                self._connect_failures += 1
+                delay = min(2.0 * (2 ** (self._connect_failures - 1)), 60.0)
+                await asyncio.sleep(delay)
+                raise
 
     def _run() -> None:
         backoff = _STREAM_BACKOFF_START_S
@@ -480,8 +511,7 @@ def start_trade_stream() -> None:
 
         while True:
             try:
-                from alpaca.trading.stream import TradingStream
-                ts = TradingStream(
+                ts = _BackoffTradingStream(
                     os.environ["ALPACA_API_KEY"],
                     os.environ["ALPACA_API_SECRET"],
                     paper=is_paper(),
