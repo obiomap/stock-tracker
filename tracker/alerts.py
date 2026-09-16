@@ -65,7 +65,7 @@ def _alert_verdict(direction: str, confidence: float = 0.0, quality: int = 0) ->
     buy on a coin-flip signal.
     """
     is_bullish = (direction or "NEUTRAL").upper() in ("BULLISH", "BULL", "UP", "OUTPERFORMING")
-    strong = confidence >= 0.55 or quality >= 45
+    strong = confidence >= 0.62 or quality >= 52
     return "BUY" if (is_bullish and strong) else "NOT A BUY"
 
 
