@@ -56,6 +56,19 @@ def _category_for_alert_type(alert_type: str) -> str:
     return "other"
 
 
+def _alert_verdict(direction: str, confidence: float = 0.0, quality: int = 0) -> str:
+    """
+    Blunt binary call appended to every alert: BUY or NOT A BUY.
+    BUY requires an explicit bullish direction backed by real confidence or
+    technical quality; anything bearish, neutral, or only weakly bullish is
+    NOT A BUY -- intentionally conservative so subscribers aren't told to
+    buy on a coin-flip signal.
+    """
+    is_bullish = (direction or "NEUTRAL").upper() in ("BULLISH", "BULL", "UP", "OUTPERFORMING")
+    strong = confidence >= 0.55 or quality >= 45
+    return "BUY" if (is_bullish and strong) else "NOT A BUY"
+
+
 def _subscriber_matches(sub: dict, alerts_meta: list[dict]) -> bool:
     """True if at least one alert in alerts_meta clears this subscriber's
     stock, severity, and category preferences."""
@@ -450,6 +463,9 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             v_color = "#eab308"; v_str = f"{vr:.1f}×"             # amber — elevated
         else:
             v_color = "#475569"; v_str = f"{vr:.1f}×"             # gray — normal
+        why_ai = f"{pred.lower()} {conf*100:.0f}% conf, RSI {fmt_rsi(s.get('rsi'))}, {v_str} vol"
+        verdict_ai = _alert_verdict(pred, conf)
+        verdict_ai_col = "#22c55e" if verdict_ai == "BUY" else "#ef4444"
         rows_ai += (
             f'<tr style="background:{alt}">'
             f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
@@ -461,14 +477,17 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'<span style="background:{sig_bg.get(pred,"#1e293b")};color:{sig_color.get(pred,"#94a3b8")};'
             f'padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700">{pred}</span></td>'
             f'<td style="padding:10px 14px;text-align:right;font-weight:700;color:#f1f5f9">{conf*100:.0f}%</td>'
+            f'<td style="padding:10px 14px;color:#94a3b8;font-size:12px">{why_ai}</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:{verdict_ai_col}">{verdict_ai}</td>'
             f'</tr>'
         )
     if not rows_ai:
-        rows_ai = _empty_row(7, "No high-confidence signals today — check back after market close")
+        rows_ai = _empty_row(9, "No high-confidence signals today — check back after market close")
 
     hdr_ai = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
               _th("Vol", "center") + _th("RSI", "center") +
-              _th("Signal", "center") + _th("Confidence", "right"))
+              _th("Signal", "center") + _th("Confidence", "right") +
+              _th("Why") + _th("Verdict", "center"))
     sec_ai = _section("&#x1F916;", "AI Top Signals", hdr_ai, rows_ai)
 
     # ── 2. TODAY'S TOP MOVERS ─────────────────────────────────────────────────
@@ -484,6 +503,11 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
         vol_str = f"{vol / avg:.1f}×" if avg > 0 else "—"
         arrow = "▲" if chg >= 0 else "▼"
         alt  = "#172033" if i % 2 else "#1e293b"
+        _m_pred = s.get("prediction", "NEUTRAL")
+        _m_conf = s.get("prediction_confidence") or 0
+        why_mv = f"{'up' if chg >= 0 else 'down'} {abs(chg):.2f}% on {vol_str} avg volume"
+        verdict_mv = _alert_verdict(_m_pred, _m_conf)
+        verdict_mv_col = "#22c55e" if verdict_mv == "BUY" else "#ef4444"
         rows_movers += (
             f'<tr style="background:{alt}">'
             f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
@@ -491,13 +515,16 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'<td style="padding:10px 14px;text-align:center;color:{chg_color(chg)};'
             f'font-weight:700;font-size:15px">{arrow} {abs(chg):.2f}%</td>'
             f'<td style="padding:10px 14px;text-align:center;color:#94a3b8;font-size:13px">{vol_str}</td>'
+            f'<td style="padding:10px 14px;color:#94a3b8;font-size:12px">{why_mv}</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:{verdict_mv_col}">{verdict_mv}</td>'
             f'</tr>'
         )
     if not rows_movers:
-        rows_movers = _empty_row(4)
+        rows_movers = _empty_row(6)
 
     hdr_movers = (_th("Symbol") + _th("Price", "right") +
-                  _th("Move", "center") + _th("Vol vs Avg", "center"))
+                  _th("Move", "center") + _th("Vol vs Avg", "center") +
+                  _th("Why") + _th("Verdict", "center"))
     sec_movers = _section("&#x1F525;", "Today's Top Movers", hdr_movers, rows_movers)
 
     # ── 3. TECHNICAL EXTREMES ─────────────────────────────────────────────────
@@ -516,8 +543,13 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
         alt  = "#172033" if i % 2 else "#1e293b"
         if rsi <= 30:
             label, lbl_color, lbl_bg = "OVERSOLD",   "#22c55e", "#14532d"
+            why_ext = f"RSI {rsi:.0f} oversold — possible bounce"
+            verdict_ext = _alert_verdict(s.get("prediction"), s.get("prediction_confidence") or 0)
         else:
             label, lbl_color, lbl_bg = "OVERBOUGHT", "#ef4444", "#7f1d1d"
+            why_ext = f"RSI {rsi:.0f} overbought — extended, risk of pullback"
+            verdict_ext = "NOT A BUY"
+        verdict_ext_col = "#22c55e" if verdict_ext == "BUY" else "#ef4444"
         rows_ext += (
             f'<tr style="background:{alt}">'
             f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
@@ -527,13 +559,16 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'<td style="padding:10px 14px;text-align:center">'
             f'<span style="background:{lbl_bg};color:{lbl_color};padding:3px 10px;'
             f'border-radius:4px;font-size:12px;font-weight:700">{label}</span></td>'
+            f'<td style="padding:10px 14px;color:#94a3b8;font-size:12px">{why_ext}</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:{verdict_ext_col}">{verdict_ext}</td>'
             f'</tr>'
         )
     if not rows_ext:
-        rows_ext = _empty_row(5, "No RSI extremes today — market conditions are neutral")
+        rows_ext = _empty_row(7, "No RSI extremes today — market conditions are neutral")
 
     hdr_ext = (_th("Symbol") + _th("Price", "right") + _th("RSI", "center") +
-               _th("Change", "center") + _th("Condition", "center"))
+               _th("Change", "center") + _th("Condition", "center") +
+               _th("Why") + _th("Verdict", "center"))
     sec_ext = _section("&#x26A1;", "Technical Extremes", hdr_ext, rows_ext)
 
     # ── 4. VOLUME SPIKES ──────────────────────────────────────────────────────
@@ -575,6 +610,9 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
         else:
             badge_bg  = "#1e293b"; badge_col = "#64748b"; badge_txt = "NEUTRAL"
 
+        why_vol = f"{ratio:.1f}× avg volume, {pred.lower()} {conf*100:.0f}% conf"
+        verdict_vol = _alert_verdict(pred, conf, quality=60 if ratio >= 2.0 else 30)
+        verdict_vol_col = "#22c55e" if verdict_vol == "BUY" else "#ef4444"
         rows_vol += (
             f'<tr style="background:{alt}">'
             f'<td style="padding:10px 14px;font-weight:700;color:#f1f5f9">{disp}</td>'
@@ -587,13 +625,16 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'<td style="padding:10px 14px;text-align:center;color:#cbd5e1">'
             f'{"—" if rsi is None else f"{float(rsi):.0f}"}'
             f'</td>'
+            f'<td style="padding:10px 14px;color:#94a3b8;font-size:12px">{why_vol}</td>'
+            f'<td style="padding:10px 14px;text-align:center;font-weight:700;color:{verdict_vol_col}">{verdict_vol}</td>'
             f'</tr>'
         )
     if not rows_vol:
-        rows_vol = _empty_row(6, "No unusual volume today — all stocks trading near average")
+        rows_vol = _empty_row(8, "No unusual volume today — all stocks trading near average")
 
     hdr_vol = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
-               _th("Vol vs Avg", "center") + _th("Signal", "center") + _th("RSI", "center"))
+               _th("Vol vs Avg", "center") + _th("Signal", "center") + _th("RSI", "center") +
+               _th("Why") + _th("Verdict", "center"))
     sec_vol = _section("&#x1F4CA;", "Volume Spikes", hdr_vol, rows_vol)
 
     # ── Assemble email ────────────────────────────────────────────────────────
@@ -774,7 +815,7 @@ def build_options_email(new_recs: list[dict]) -> str:
     calls = [r for r in new_recs if r.get("type", "").upper() == "CALL"]
     puts  = [r for r in new_recs if r.get("type", "").upper() == "PUT"]
 
-    NCOLS = 11   # number of columns in the data table
+    NCOLS = 12   # number of columns in the data table
 
     def _rows(r: dict, bg: str) -> str:
         """Return two <tr>: the data row + a full-width payoff chart row."""
@@ -783,6 +824,8 @@ def build_options_email(new_recs: list[dict]) -> str:
         iv_pct   = f"{r.get('iv', 0) * 100:.0f}%"
         score    = r.get("score", 0)
         score_bg = "#166534" if score >= 70 else "#1e40af" if score >= 50 else "#475569"
+        verdict     = "BUY" if score >= 50 else "NOT A BUY"
+        verdict_bg  = "#166534" if verdict == "BUY" else "#7f1d1d"
 
         data_row = (
             f'<tr style="background:{bg}">'
@@ -804,6 +847,9 @@ def build_options_email(new_recs: list[dict]) -> str:
             f'border-radius:4px;font-weight:bold">{score:.0f}</span></td>'
             f'<td style="padding:10px 12px;color:#64748b;font-size:13px">'
             f'{r.get("reason","")}</td>'
+            f'<td style="padding:10px 12px;text-align:center">'
+            f'<span style="background:{verdict_bg};color:white;padding:2px 8px;'
+            f'border-radius:4px;font-size:11px;font-weight:bold">{verdict}</span></td>'
             f'</tr>'
         )
 
@@ -844,7 +890,8 @@ def build_options_email(new_recs: list[dict]) -> str:
         f'<th style="padding:8px 12px;text-align:right">OI</th>'
         f'<th style="padding:8px 12px;text-align:right">Vol</th>'
         f'<th style="padding:8px 12px;text-align:center">Score</th>'
-        f'<th style="padding:8px 12px;text-align:left">Signal Reason</th>'
+        f'<th style="padding:8px 12px;text-align:left">Signal Reason (Why)</th>'
+        f'<th style="padding:8px 12px;text-align:center">Verdict</th>'
         f'</tr>'
     )
 
@@ -1234,7 +1281,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                     regime_tag = " ↑ strong bull"
                 else:
                     regime_tag = ""
-                msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | {ctx}"
+                verdict = _alert_verdict(signal, conf, quality)
+                msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | Why: {ctx} | {verdict}"
                 db.log_alert(alert_type, sym, msg, severity)
                 new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
                                    "category": _category_for_alert_type(alert_type)})
@@ -1247,7 +1295,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 below_ma20 = s.get("ma20") and price_val < (s.get("ma20") or 0) * 1.01
                 if vol_ratio >= 1.2 or below_ma20:
                     quality, ctx = _tech_context(s, pred, vol_ratio)
-                    msg = f"{sym} RSI={rsi:.0f} — oversold, watch for bounce | {ctx}"
+                    verdict = _alert_verdict(signal, conf, quality)
+                    msg = f"{sym} RSI={rsi:.0f} — oversold, watch for bounce | Why: {ctx} | {verdict}"
                     db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
                     new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
                                        "category": "rsi"})
@@ -1255,7 +1304,7 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 above_ma50 = s.get("ma50") and price_val > (s.get("ma50") or 0) * 1.05
                 if vol_ratio >= 1.2 or above_ma50:
                     quality, ctx = _tech_context(s, pred, vol_ratio)
-                    msg = f"{sym} RSI={rsi:.0f} — overbought, potential pullback | {ctx}"
+                    msg = f"{sym} RSI={rsi:.0f} — overbought, potential pullback | Why: {ctx} | NOT A BUY (overbought)"
                     db.log_alert("RSI_OVERBOUGHT", sym, msg, "MEDIUM")
                     new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
                                        "category": "rsi"})
@@ -1263,7 +1312,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         if vol_ratio >= vol_spike and not db.was_alert_sent_today("VOLUME_SPIKE", sym):
             direction_str = "bullish" if chg > 0.5 else "bearish" if chg < -0.5 else "neutral"
             quality, ctx = _tech_context(s, pred, vol_ratio)
-            msg = f"{sym} {vol_ratio:.1f}× volume spike ({direction_str}) | {ctx}"
+            verdict = _alert_verdict("BULLISH" if direction_str == "bullish" else signal, conf, quality)
+            msg = f"{sym} {vol_ratio:.1f}× volume spike ({direction_str}) | Why: {ctx} | {verdict}"
             db.log_alert("VOLUME_SPIKE", sym, msg, "MEDIUM")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
                                "category": "volume"})
@@ -1274,7 +1324,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 and not db.was_alert_sent_today(f"ML_{signal}", sym)):
             quality, ctx = _tech_context(s, pred, vol_ratio)
             if quality >= 25:
-                msg = f"{sym} {signal} {conf*100:.0f}% confidence | {ctx}"
+                verdict = _alert_verdict(signal, conf, quality)
+                msg = f"{sym} {signal} {conf*100:.0f}% confidence | Why: {ctx} | {verdict}"
                 db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
                 new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
                                    "category": "ml_signal"})
@@ -1284,8 +1335,9 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 and abs(chg) >= min_move_for_ml
                 and not db.was_alert_sent_today("VOL_CONFIRMED", sym)):
             quality, ctx = _tech_context(s, pred, vol_ratio)
+            verdict = _alert_verdict(signal, conf, quality)
             msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
-                   f"— conviction | {ctx}")
+                   f"— conviction | Why: {ctx} | {verdict}")
             db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
                                "category": "conviction"})
@@ -1308,8 +1360,9 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 p10 = pred.get("prob_10d")
                 if all(p is not None for p in [p3, p5, p10]):
                     mt_str = f" [3d:{p3:.0%} 5d:{p5:.0%} 10d:{p10:.0%}]"
+            verdict = _alert_verdict(combo["direction"], quality=combo["score"])
             msg = (f"{sym} multi-factor {combo['direction']}{hc_tag} "
-                   f"(score {combo['score']}/100){mt_str} | {sig_str}")
+                   f"(score {combo['score']}/100){mt_str} | Why: {sig_str} | {verdict}")
             severity = "HIGH" if (combo["score"] >= 75 or is_high_conf) else "MEDIUM"
             db.log_alert("COMBINED_SIGNAL", sym, msg, severity)
             new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
@@ -1320,7 +1373,7 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         if not is_crypto and not db.was_alert_sent_recently("LONGTERM_BUY", sym, days=7):
             lt_score, lt_ctx = _longterm_score(s, pred, vol_ratio)
             if lt_score >= 75:
-                msg = f"{sym} long-term setup {lt_score}/100 | {lt_ctx}"
+                msg = f"{sym} long-term setup {lt_score}/100 | Why: {lt_ctx} | BUY (long-term)"
                 db.log_alert("LONGTERM_BUY", sym, msg, "MEDIUM")
                 new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
                                    "category": "longterm"})
@@ -1331,7 +1384,13 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         if 0 <= days <= earn_days and not db.was_alert_sent_today("EARNINGS_UPCOMING", sym):
             rxn = e.get("avg_reaction_pct")
             rxn_str = f" | Avg reaction: {rxn:+.1f}%" if rxn is not None else ""
-            msg = f"{sym} earnings in {days} day(s) -- {e['earnings_date']}{rxn_str}"
+            _e_pred = predictions.get(sym, {})
+            why = f"Earnings in {days}d ({e['earnings_date']})"
+            if rxn is not None:
+                why += f", historically reacts {rxn:+.1f}% on avg"
+            verdict = _alert_verdict(_e_pred.get("signal"), _e_pred.get("confidence", 0),
+                                     quality=55 if (rxn or 0) > 0 else 0)
+            msg = f"{sym} earnings in {days} day(s) -- {e['earnings_date']}{rxn_str} | Why: {why} | {verdict}"
             db.log_alert("EARNINGS_UPCOMING", sym, msg, "HIGH")
             new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
                                "category": "earnings"})
@@ -1342,8 +1401,11 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         for div in divergences:
             sym = div["symbol"]
             if not db.was_alert_sent_today("FOCUS_DIVERGENCE", sym):
-                db.log_alert("FOCUS_DIVERGENCE", sym, div["message"], div["severity"])
-                new_alerts.append({"symbol": sym, "message": div["message"],
+                verdict = _alert_verdict(div["direction"],
+                                         quality=60 if abs(div["z_score"]) >= 2.5 else 35)
+                msg = f"{div['message']} | Why: diverging {abs(div['z_score']):.1f}σ from AI focus group | {verdict}"
+                db.log_alert("FOCUS_DIVERGENCE", sym, msg, div["severity"])
+                new_alerts.append({"symbol": sym, "message": msg,
                                    "severity": div["severity"], "category": "focus"})
 
     # ── Focus group: news catalyst detection ──────────────────────────────────
@@ -1355,7 +1417,12 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 for cat in catalysts[:1]:   # one alert per symbol per refresh
                     alert_type = f"FOCUS_CATALYST_{cat['type']}"
                     if not db.was_alert_sent_today(alert_type, sym):
-                        msg = f"{sym} [{cat['type']}] {cat['headline']}"
+                        _cat_lean = ("BULLISH" if cat["type"] in ("UPGRADE", "LAUNCH", "DEAL")
+                                     else "BEARISH" if cat["type"] in ("DOWNGRADE", "REGULATORY")
+                                     else "NEUTRAL")
+                        verdict = _alert_verdict(_cat_lean, quality=50)
+                        msg = (f"{sym} [{cat['type']}] {cat['headline']} | "
+                               f"Why: {cat['type'].title()} news catalyst | {verdict}")
                         db.log_alert(alert_type, sym, msg, "MEDIUM")
                         new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
                                            "category": "news"})
@@ -1414,10 +1481,12 @@ def send_sweep_alert(sweeps: list[dict], config: dict) -> int:
 
     def _sweep_rows(rows):
         if not rows:
-            return "<tr><td colspan='6' style='padding:12px;color:#94a3b8;text-align:center'>None detected</td></tr>"
+            return "<tr><td colspan='7' style='padding:12px;color:#94a3b8;text-align:center'>None detected</td></tr>"
         out = ""
         for s in rows[:8]:
-            color  = "#34d399" if s.get("direction") in ("BULLISH","ACCUMULATION") else "#f87171"
+            is_bullish = s.get("direction") in ("BULLISH", "ACCUMULATION")
+            color   = "#34d399" if is_bullish else "#f87171"
+            verdict = "BUY" if is_bullish else "NOT A BUY"
             badge  = s.get("opt_type") or s.get("direction", "")
             out += (
                 f"<tr style='border-bottom:1px solid #1e293b'>"
@@ -1433,6 +1502,9 @@ def send_sweep_alert(sweeps: list[dict], config: dict) -> int:
                 f"{'Vol/OI: '+str(s.get('vol_oi_ratio',''))+'x' if s.get('vol_oi_ratio') else 'Vol: '+str(s.get('vol_ratio',''))+'x avg'}</td>"
                 f"<td style='padding:10px 14px;color:#94a3b8;font-size:12px'>"
                 f"{'IV: '+str(s.get('iv_pct',''))+'%' if s.get('iv_pct') else str(abs(s.get('change_pct',0)))+'% price chg'}</td>"
+                f"<td style='padding:10px 14px;text-align:center'>"
+                f"<span style='background:{color}22;color:{color};padding:2px 8px;"
+                f"border-radius:4px;font-size:11px;font-weight:700'>{verdict}</span></td>"
                 f"</tr>"
             )
         return out
@@ -1443,11 +1515,11 @@ def send_sweep_alert(sweeps: list[dict], config: dict) -> int:
   <h1 style="color:#fff;font-size:22px;margin-bottom:4px">&#x1F30A; Flow Intelligence Alert</h1>
   <p style="color:#94a3b8;margin-bottom:28px;font-size:14px">Unusual institutional activity detected &bull; jpstocktracker.pro</p>
 
-  {'<h3 style="color:#fbbf24;margin-bottom:8px">&#x2728; Golden Sweeps</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">TYPE</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PREMIUM</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL/OI</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">IV</th></tr></thead><tbody>'+_sweep_rows(golden)+'</tbody></table><br>' if golden else ''}
+  {'<h3 style="color:#fbbf24;margin-bottom:8px">&#x2728; Golden Sweeps</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">TYPE</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PREMIUM</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL/OI</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">IV</th><th style="padding:8px 14px;text-align:center;color:#64748b;font-size:11px">VERDICT</th></tr></thead><tbody>'+_sweep_rows(golden)+'</tbody></table><br>' if golden else ''}
 
-  {'<h3 style="color:#818cf8;margin-bottom:8px">&#x1F4CA; Options Sweeps</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">TYPE</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PREMIUM</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL/OI</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">IV</th></tr></thead><tbody>'+_sweep_rows(opt_sweeps)+'</tbody></table><br>' if opt_sweeps else ''}
+  {'<h3 style="color:#818cf8;margin-bottom:8px">&#x1F4CA; Options Sweeps</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">TYPE</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PREMIUM</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL/OI</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">IV</th><th style="padding:8px 14px;text-align:center;color:#64748b;font-size:11px">VERDICT</th></tr></thead><tbody>'+_sweep_rows(opt_sweeps)+'</tbody></table><br>' if opt_sweeps else ''}
 
-  {'<h3 style="color:#38bdf8;margin-bottom:8px">&#x1F3DB; Dark Pool Blocks</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">DIR</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">NOTIONAL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL RATIO</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PRICE CHG</th></tr></thead><tbody>'+_sweep_rows(dark_pool)+'</tbody></table><br>' if dark_pool else ''}
+  {'<h3 style="color:#38bdf8;margin-bottom:8px">&#x1F3DB; Dark Pool Blocks</h3><table width="100%" style="border-collapse:collapse;background:#1e293b;border-radius:8px"><thead><tr style="background:#0f172a"><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">SYMBOL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">DIR</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">STRIKE/EXP</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">NOTIONAL</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">VOL RATIO</th><th style="padding:8px 14px;text-align:left;color:#64748b;font-size:11px">PRICE CHG</th><th style="padding:8px 14px;text-align:center;color:#64748b;font-size:11px">VERDICT</th></tr></thead><tbody>'+_sweep_rows(dark_pool)+'</tbody></table><br>' if dark_pool else ''}
 
   <p style="color:#475569;font-size:12px;margin-top:24px">
     &#x26A0;&#xFE0F; Dark pool signals are approximations based on public volume data. Not financial advice.
