@@ -1173,6 +1173,12 @@ def _send_otp_email(to_email: str, code: str, config: dict) -> bool:
 
 def _public_landing() -> Response:
     """Minimal landing page for unauthenticated visitors."""
+    from . import alerts as alert_mod
+    _cat_checkboxes = "".join(
+        f'<label class="sub-check"><input type="checkbox" name="categories" value="{key}">'
+        f'<span>{label}</span></label>'
+        for key, label in alert_mod.ALERT_CATEGORIES
+    )
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1227,6 +1233,15 @@ h1 .acc{background:linear-gradient(90deg,#818cf8,#c084fc);
          font-size:16px;font-weight:700;transition:opacity .2s;margin-top:6px}
 .sub-btn:hover{opacity:.9}
 .sub-note{font-size:11px;color:rgba(255,255,255,.25);margin-top:12px}
+.sub-radio{display:flex;align-items:flex-start;gap:8px;padding:8px 0;
+           font-size:13px;color:rgba(255,255,255,.7);cursor:pointer;text-align:left}
+.sub-radio input{margin-top:3px;flex-shrink:0}
+.sub-check{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+           border-radius:20px;font-size:12px;color:rgba(255,255,255,.7);
+           background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
+           cursor:pointer;margin:0 4px 8px 0}
+.sub-check:has(input:checked){border-color:#818cf8;background:rgba(99,102,241,.18);color:#fff}
+.sub-check-wrap{display:flex;flex-wrap:wrap}
 .footer{text-align:center;padding:24px;color:rgba(255,255,255,.25);font-size:12px}
 </style>
 </head>
@@ -1288,6 +1303,21 @@ h1 .acc{background:linear-gradient(90deg,#818cf8,#c084fc);
         <input type="tel" name="phone_number" placeholder="+1 555 000 0000">
         <input type="hidden" name="carrier" value="">
       </div>
+      <div class="sub-field">
+        <label>Alert importance</label>
+        <label class="sub-radio">
+          <input type="radio" name="min_severity" value="HIGH" checked>
+          <span>Only very important trade leads <em style="color:rgba(255,255,255,.4)">(recommended)</em></span>
+        </label>
+        <label class="sub-radio">
+          <input type="radio" name="min_severity" value="MEDIUM">
+          <span>Everything, including lower-confidence signals</span>
+        </label>
+      </div>
+      <div class="sub-field">
+        <label>What to monitor <em style="color:rgba(255,255,255,.3);text-transform:none;font-weight:400">(optional &mdash; none checked = everything)</em></label>
+        <div class="sub-check-wrap">__CATEGORY_CHECKBOXES__</div>
+      </div>
       <button type="submit" class="sub-btn">&#x1F4E7; Subscribe &amp; Get Access</button>
       <div class="sub-note">Free &bull; Unsubscribe any time &bull; No spam</div>
     </form>
@@ -1299,6 +1329,7 @@ h1 .acc{background:linear-gradient(90deg,#818cf8,#c084fc);
 </div>
 </body>
 </html>"""
+    html = html.replace("__CATEGORY_CHECKBOXES__", _cat_checkboxes)
     return Response(html, mimetype="text/html")
 
 
@@ -1318,13 +1349,14 @@ def create_app() -> Flask:
 
     # ── Auth gate ─────────────────────────────────────────────────────────────
     _PUBLIC_PATHS = {"/", "/login", "/login/request", "/login/verify",
-                     "/logout", "/subscribe", "/unsubscribe"}
+                     "/logout", "/subscribe", "/unsubscribe", "/preferences"}
 
     @_app.before_request
     def _check_auth():
         path = request.path
-        # Allow public paths and all unsubscribe variants
-        if path in _PUBLIC_PATHS or path.startswith("/unsubscribe"):
+        # Allow public paths and all unsubscribe/preferences variants
+        if (path in _PUBLIC_PATHS or path.startswith("/unsubscribe")
+                or path.startswith("/preferences")):
             return None
         if session.get("subscriber_email"):
             return None
@@ -2101,6 +2133,9 @@ def create_app() -> Flask:
               </div>
               <div class="sector-stocks">{chips}</div>
             </div>"""
+
+        from . import alerts as alert_mod
+        alert_categories = alert_mod.ALERT_CATEGORIES
 
         # -- carrier dropdown (SMS without Twilio)
         carrier_select = ""
@@ -3465,6 +3500,25 @@ def create_app() -> Flask:
         </label>
       </div>
 
+      <div class="stock-picker">
+        <div class="stock-picker-label">&#x1F3AF; How important should an alert be to reach you?</div>
+        <label class="all-stocks">
+          <input type="radio" name="min_severity" value="HIGH" checked>
+          &nbsp; Only very important trade leads <span class="optional">(recommended &mdash; high-confidence signals only)</span>
+        </label>
+        <label class="all-stocks">
+          <input type="radio" name="min_severity" value="MEDIUM">
+          &nbsp; Everything, including lower-confidence signals
+        </label>
+      </div>
+
+      <div class="stock-picker">
+        <div class="stock-picker-label">&#x1F9E9; What kinds of alerts do you want? <span class="optional">(none checked = all kinds)</span></div>
+        <div class="sector-stocks" style="max-height:none">
+          {"".join(f'<label class="stock-chip"><input type="checkbox" name="categories" value="{key}"><span>{label}</span></label>' for key, label in alert_categories)}
+        </div>
+      </div>
+
       <button type="submit" class="btn-submit">&#x1F680; Subscribe Free</button>
       <p class="privacy-note">
         &#x1F512; No spam, ever. Unsubscribe instantly via one link.
@@ -4405,8 +4459,18 @@ if (document.getElementById('positionsTableBody')) {{
         else:
             stocks = [s for s in selected if s in watchlist]
 
-        token     = db.add_subscriber(email, stocks, phone_number=phone, carrier=carrier)
+        from . import alerts as alert_mod
+        min_severity   = (request.form.get("min_severity") or "HIGH").upper()
+        if min_severity not in alert_mod.SEVERITY_RANK:
+            min_severity = "HIGH"
+        valid_cats     = {k for k, _ in alert_mod.ALERT_CATEGORIES}
+        cat_selected   = request.form.getlist("categories")
+        categories     = [c for c in cat_selected if c in valid_cats]
+
+        token     = db.add_subscriber(email, stocks, phone_number=phone, carrier=carrier,
+                                       min_severity=min_severity, categories=categories)
         unsub     = f"{_base_url()}/unsubscribe?token={token}"
+        prefs_url = f"{_base_url()}/preferences?token={token}"
         stock_str = ", ".join(sec_mod.display_symbol(s) for s in stocks) if stocks else "all stocks"
 
         # Build channel confirmation lines
@@ -4432,6 +4496,10 @@ if (document.getElementById('positionsTableBody')) {{
     {contact_line}
     <p style="margin-top:8px">Tracking: <strong>{stock_str}</strong></p>
     <p style="margin-top:16px;font-size:13px;color:var(--muted)">
+      Manage what you monitor and how alerts are filtered anytime:<br>
+      <a href="{prefs_url}" style="word-break:break-all;font-size:12px">{prefs_url}</a>
+    </p>
+    <p style="margin-top:8px;font-size:13px;color:var(--muted)">
       Unsubscribe anytime:<br>
       <a href="{unsub}" style="word-break:break-all;font-size:12px">{unsub}</a>
     </p>
@@ -4501,6 +4569,143 @@ if (document.getElementById('positionsTableBody')) {{
     </form>
     <p style="margin-top:16px;text-align:center">
       <a href="/" style="font-size:14px;color:var(--muted)">&larr; Back to signup</a>
+    </p>
+  </div>
+</div>
+<footer class="footer">&#x1F4C8; Stock Tracker &bull; <a href="/">Home</a></footer>
+""")
+        return Response(html, mimetype="text/html")
+
+    # ── manage alert preferences ──────────────────────────────────────────────
+
+    @_app.route("/preferences", methods=["GET", "POST"])
+    def preferences():
+        from . import alerts as alert_mod
+        token = request.args.get("token") or request.form.get("token") or ""
+
+        if request.method == "POST":
+            sub = db.get_subscriber_by_token(token) if token else None
+            if not sub:
+                return _simple_error("Invalid or expired preferences link.")
+
+            watchlist = _watchlist()
+            selected  = request.form.getlist("stocks")
+            if "__ALL__" in selected or not selected:
+                stocks = []
+            else:
+                stocks = [s for s in selected if s in watchlist]
+
+            min_severity = (request.form.get("min_severity") or "HIGH").upper()
+            if min_severity not in alert_mod.SEVERITY_RANK:
+                min_severity = "HIGH"
+            valid_cats   = {k for k, _ in alert_mod.ALERT_CATEGORIES}
+            categories   = [c for c in request.form.getlist("categories") if c in valid_cats]
+
+            db.update_subscriber_preferences(token, stocks, min_severity=min_severity,
+                                             categories=categories)
+
+            html = _base_html("Preferences Updated", f"""
+<div style="max-width:540px;margin:60px auto;padding:0 20px">
+  <div class="page-card">
+    <div class="icon">&#x2705;</div>
+    <h2 style="color:#16a34a">Preferences saved</h2>
+    <p>Your monitoring &amp; alert settings for <strong>{sub['email']}</strong> have been updated.</p>
+    <a href="/preferences?token={token}" class="btn-back">&#x2190; Edit again</a>
+    <a href="/" class="btn-back">Home</a>
+  </div>
+</div>
+<footer class="footer">&#x1F4C8; Stock Tracker &bull; <a href="/">Home</a></footer>
+""")
+            return Response(html, mimetype="text/html")
+
+        # ── GET: render the edit form ───────────────────────────────────────────
+        hidden      = f'<input type="hidden" name="token" value="{token}">' if token else ""
+        token_field = "" if token else """
+            <div class="field">
+              <label>Your preferences token <span class="optional">(from your alert email)</span></label>
+              <input type="text" name="token" required placeholder="paste token here">
+            </div>"""
+
+        if not token:
+            html = _base_html("Manage Preferences", f"""
+<div style="max-width:520px;margin:60px auto;padding:0 20px">
+  <div class="page-card" style="text-align:left">
+    <h2 style="margin-bottom:20px">Manage Alert Preferences</h2>
+    <form method="GET" action="/preferences">
+      {token_field.replace('required', 'required')}
+      <button type="submit" class="btn-submit" style="margin-top:16px">Continue</button>
+    </form>
+    <p style="margin-top:16px;text-align:center">
+      <a href="/" style="font-size:14px;color:var(--muted)">&larr; Back to signup</a>
+    </p>
+  </div>
+</div>
+<footer class="footer">&#x1F4C8; Stock Tracker &bull; <a href="/">Home</a></footer>
+""")
+            return Response(html, mimetype="text/html")
+
+        sub = db.get_subscriber_by_token(token)
+        if not sub:
+            return _simple_error("Invalid or expired preferences link.")
+
+        watchlist   = _watchlist()
+        sub_stocks  = set(sub["stocks"])
+        track_all   = not sub_stocks
+        stock_chips = "".join(
+            f'<label class="stock-chip">'
+            f'<input type="checkbox" name="stocks" value="{s}" {"checked" if track_all or s in sub_stocks else ""}>'
+            f'<span>{sec_mod.display_symbol(s)}</span></label>'
+            for s in sorted(watchlist)
+        )
+        sub_cats = set(sub.get("categories") or [])
+        cat_chips = "".join(
+            f'<label class="stock-chip">'
+            f'<input type="checkbox" name="categories" value="{key}" {"checked" if key in sub_cats else ""}>'
+            f'<span>{label}</span></label>'
+            for key, label in alert_mod.ALERT_CATEGORIES
+        )
+        sev = sub.get("min_severity", "HIGH")
+
+        html = _base_html("Manage Preferences", f"""
+<div style="max-width:640px;margin:60px auto;padding:0 20px">
+  <div class="page-card" style="text-align:left">
+    <h2 style="margin-bottom:6px">Manage Alert Preferences</h2>
+    <p style="color:var(--muted);margin-bottom:20px">Editing settings for <strong>{sub['email']}</strong></p>
+    <form method="POST" action="/preferences">
+      {hidden}
+
+      <div class="stock-picker">
+        <div class="stock-picker-label">&#x2713; Stocks &amp; cryptos to track</div>
+        <label class="all-stocks">
+          <input type="checkbox" name="stocks" value="__ALL__" {"checked" if track_all else ""}>
+          &nbsp; All current &amp; future additions
+        </label>
+        <div class="sector-stocks" style="max-height:none">{stock_chips}</div>
+      </div>
+
+      <div class="stock-picker">
+        <div class="stock-picker-label">&#x1F3AF; How important should an alert be to reach you?</div>
+        <label class="all-stocks">
+          <input type="radio" name="min_severity" value="HIGH" {"checked" if sev == "HIGH" else ""}>
+          &nbsp; Only very important trade leads <span class="optional">(recommended)</span>
+        </label>
+        <label class="all-stocks">
+          <input type="radio" name="min_severity" value="MEDIUM" {"checked" if sev != "HIGH" else ""}>
+          &nbsp; Everything, including lower-confidence signals
+        </label>
+      </div>
+
+      <div class="stock-picker">
+        <div class="stock-picker-label">&#x1F9E9; What kinds of alerts do you want? <span class="optional">(none checked = all kinds)</span></div>
+        <div class="sector-stocks" style="max-height:none">{cat_chips}</div>
+      </div>
+
+      <button type="submit" class="btn-submit" style="margin-top:16px">Save Preferences</button>
+    </form>
+    <p style="margin-top:16px;text-align:center">
+      <a href="/unsubscribe?token={token}" style="font-size:13px;color:var(--muted)">Unsubscribe instead</a>
+      &bull;
+      <a href="/" style="font-size:14px;color:var(--muted)">&larr; Home</a>
     </p>
   </div>
 </div>

@@ -75,6 +75,8 @@ def init_db() -> None:
                 active INTEGER NOT NULL DEFAULT 1,
                 phone_number TEXT DEFAULT '',
                 carrier TEXT DEFAULT '',
+                min_severity TEXT NOT NULL DEFAULT 'HIGH',
+                categories TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL
             );
 
@@ -218,6 +220,10 @@ def _migrate_columns() -> None:
                     conn.execute("ALTER TABLE subscribers ADD COLUMN phone_number TEXT DEFAULT ''")
                 if "carrier" not in sub_cols:
                     conn.execute("ALTER TABLE subscribers ADD COLUMN carrier TEXT DEFAULT ''")
+                if "min_severity" not in sub_cols:
+                    conn.execute("ALTER TABLE subscribers ADD COLUMN min_severity TEXT NOT NULL DEFAULT 'HIGH'")
+                if "categories" not in sub_cols:
+                    conn.execute("ALTER TABLE subscribers ADD COLUMN categories TEXT NOT NULL DEFAULT '[]'")
         except Exception:
             pass
         # Fix sector/last_updated swap: if any sector value looks like a
@@ -408,26 +414,53 @@ def was_alert_sent_recently(alert_type: str, symbol: str, days: int = 7) -> bool
 
 # ── subscribers ───────────────────────────────────────────────────────────────
 
-def add_subscriber(email: str, stocks: list[str], phone_number: str = "", carrier: str = "") -> str:
+def add_subscriber(email: str, stocks: list[str], phone_number: str = "", carrier: str = "",
+                    min_severity: str = "HIGH", categories: list[str] | None = None) -> str:
     import secrets
     token = secrets.token_urlsafe(24)
+    categories = categories or []
+    min_severity = (min_severity or "HIGH").upper()
     with get_connection() as conn:
         try:
             conn.execute("""
-                INSERT INTO subscribers (email, stocks, token, active, phone_number, carrier, created_at)
-                VALUES (?, ?, ?, 1, ?, ?, ?)
+                INSERT INTO subscribers
+                    (email, stocks, token, active, phone_number, carrier, min_severity, categories, created_at)
+                VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)
             """, (email.lower().strip(), json.dumps(stocks), token,
-                  phone_number.strip(), carrier.strip(), datetime.now().isoformat()))
+                  phone_number.strip(), carrier.strip(), min_severity, json.dumps(categories),
+                  datetime.now().isoformat()))
             return token
         except sqlite3.IntegrityError:
             conn.execute("""
-                UPDATE subscribers SET active=1, stocks=?, phone_number=?, carrier=?, created_at=?
+                UPDATE subscribers
+                SET active=1, stocks=?, phone_number=?, carrier=?, min_severity=?, categories=?, created_at=?
                 WHERE email=?
-            """, (json.dumps(stocks), phone_number.strip(), carrier.strip(),
-                  datetime.now().isoformat(), email.lower().strip()))
+            """, (json.dumps(stocks), phone_number.strip(), carrier.strip(), min_severity,
+                  json.dumps(categories), datetime.now().isoformat(), email.lower().strip()))
             row = conn.execute("SELECT token FROM subscribers WHERE email=?",
                                (email.lower().strip(),)).fetchone()
             return row["token"] if row else token
+
+
+def update_subscriber_preferences(token: str, stocks: list[str], min_severity: str = "HIGH",
+                                   categories: list[str] | None = None,
+                                   phone_number: str | None = None, carrier: str | None = None) -> bool:
+    """Update an existing subscriber's monitoring/alert preferences in place. Returns False if token unknown."""
+    sub = get_subscriber_by_token(token)
+    if not sub:
+        return False
+    categories = categories if categories is not None else []
+    min_severity = (min_severity or "HIGH").upper()
+    phone_number = sub.get("phone_number", "") if phone_number is None else phone_number
+    carrier = sub.get("carrier", "") if carrier is None else carrier
+    with get_connection() as conn:
+        conn.execute("""
+            UPDATE subscribers
+            SET stocks=?, min_severity=?, categories=?, phone_number=?, carrier=?
+            WHERE token=?
+        """, (json.dumps(stocks), min_severity, json.dumps(categories),
+              (phone_number or "").strip(), (carrier or "").strip(), token))
+    return True
 
 
 def remove_subscriber(token: str) -> bool:
@@ -445,6 +478,8 @@ def get_active_subscribers() -> list[dict]:
     for row in rows:
         d = dict(row)
         d["stocks"] = json.loads(d.get("stocks") or "[]")
+        d["categories"] = json.loads(d.get("categories") or "[]")
+        d["min_severity"] = (d.get("min_severity") or "HIGH").upper()
         result.append(d)
     return result
 
@@ -456,6 +491,8 @@ def get_subscriber_by_token(token: str) -> dict | None:
         return None
     d = dict(row)
     d["stocks"] = json.loads(d.get("stocks") or "[]")
+    d["categories"] = json.loads(d.get("categories") or "[]")
+    d["min_severity"] = (d.get("min_severity") or "HIGH").upper()
     return d
 
 

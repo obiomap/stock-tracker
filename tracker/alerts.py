@@ -10,6 +10,69 @@ from . import correlation as corr_mod
 from . import news as news_mod
 
 
+# ── Subscriber-controlled alert intelligence ──────────────────────────────────
+# Subscribers pick a minimum severity (default HIGH — "only very important
+# trade leads") and, optionally, which alert categories they care about.
+
+SEVERITY_RANK = {"MEDIUM": 1, "HIGH": 2}
+
+ALERT_CATEGORIES: list[tuple[str, str]] = [
+    ("price",           "Price Moves"),
+    ("rsi",              "RSI Extremes"),
+    ("volume",           "Volume Spikes"),
+    ("ml_signal",        "AI Signals"),
+    ("conviction",       "AI + Volume Conviction"),
+    ("combined_signal",  "Multi-Factor Signals"),
+    ("longterm",         "Long-Term Setups"),
+    ("earnings",         "Earnings Calendar"),
+    ("focus",            "Focus Group Divergence"),
+    ("news",             "News Catalysts"),
+    ("options",          "Options Flow"),
+    ("flow",             "Institutional Flow (Sweeps / Dark Pool)"),
+]
+
+
+def _category_for_alert_type(alert_type: str) -> str:
+    if alert_type.startswith("PRICE_"):
+        return "price"
+    if alert_type.startswith("RSI_"):
+        return "rsi"
+    if alert_type == "VOLUME_SPIKE":
+        return "volume"
+    if alert_type.startswith("ML_"):
+        return "ml_signal"
+    if alert_type == "VOL_CONFIRMED":
+        return "conviction"
+    if alert_type == "COMBINED_SIGNAL":
+        return "combined_signal"
+    if alert_type == "LONGTERM_BUY":
+        return "longterm"
+    if alert_type == "EARNINGS_UPCOMING":
+        return "earnings"
+    if alert_type == "FOCUS_DIVERGENCE":
+        return "focus"
+    if alert_type.startswith("FOCUS_CATALYST_"):
+        return "news"
+    return "other"
+
+
+def _subscriber_matches(sub: dict, alerts_meta: list[dict]) -> bool:
+    """True if at least one alert in alerts_meta clears this subscriber's
+    stock, severity, and category preferences."""
+    sub_stocks = set(sub.get("stocks") or [])
+    min_rank = SEVERITY_RANK.get((sub.get("min_severity") or "HIGH").upper(), 2)
+    sub_categories = set(sub.get("categories") or [])
+    for a in alerts_meta:
+        if sub_stocks and a.get("symbol") not in sub_stocks:
+            continue
+        if SEVERITY_RANK.get((a.get("severity") or "MEDIUM").upper(), 1) < min_rank:
+            continue
+        if sub_categories and a.get("category") not in sub_categories:
+            continue
+        return True
+    return False
+
+
 # ── Resend (preferred) ────────────────────────────────────────────────────────
 
 def _resend_api_key(config: dict) -> str:
@@ -152,6 +215,7 @@ def notify_subscribers(
     sms_body: str,
     relevant_symbols: set[str],
     config: dict,
+    alerts_meta: list[dict] | None = None,
 ) -> dict[str, int]:
     """
     Fan out to all matching subscribers via every channel they have configured.
@@ -161,6 +225,14 @@ def notify_subscribers(
       • SMS   — if they have a phone number and SMS delivery is available.
 
     Either channel can succeed or fail without affecting the other.
+
+    alerts_meta, when provided, is the list of {"symbol", "severity", "category"}
+    dicts backing this notification. Each subscriber only receives it if at
+    least one of those alerts clears their own minimum-severity and
+    category preferences (set via /preferences) — this is what keeps
+    "only very important trade leads" subscribers from being paged on noise.
+    When omitted, subscribers are matched on stocks only (legacy behavior).
+
     Returns {"email_sent": N, "sms_sent": N}.
     """
     subscribers = db.get_active_subscribers()
@@ -182,6 +254,9 @@ def notify_subscribers(
             sub_stocks = set(sub["stocks"])
             # Skip if subscriber tracks specific stocks and none match the alert
             if sub_stocks and not (sub_stocks & relevant_symbols):
+                continue
+            # Fine-grained gate: severity + category preferences
+            if alerts_meta is not None and not _subscriber_matches(sub, alerts_meta):
                 continue
 
             # ── Email channel ──────────────────────────────────────────────
@@ -559,6 +634,8 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
   <!-- Footer -->
   <p style="color:#334155;font-size:11px;margin-top:12px;text-align:center;line-height:1.7">
     Stock Tracker &bull; {now} UTC &bull; Prices delayed ~15 min<br>
+    <a href="https://jpstocktracker.pro/preferences" style="color:#4f46e5">Manage alert preferences</a>
+    &bull;
     <a href="https://jpstocktracker.pro/unsubscribe" style="color:#4f46e5">Unsubscribe</a>
   </p>
 
@@ -838,8 +915,11 @@ def send_options_alert(new_recs: list[dict], config: dict) -> int:
     # Admin email
     send_email(subject, html, config)
 
-    # Subscriber fan-out: email AND/OR SMS
-    counts = notify_subscribers(subject, html, sms_text, set(syms), config)
+    # Subscriber fan-out: email AND/OR SMS. Options recs are inherently
+    # noteworthy trade leads, so they're tagged HIGH severity — subscribers
+    # only need "options" in their categories (or no category filter) to get them.
+    alerts_meta = [{"symbol": sym, "severity": "HIGH", "category": "options"} for sym in syms]
+    counts = notify_subscribers(subject, html, sms_text, set(syms), config, alerts_meta=alerts_meta)
     print(f"[options alert] admin notified | subscribers: email={counts['email_sent']} sms={counts['sms_sent']} | {len(new_recs)} recs")
     return counts["email_sent"] + counts["sms_sent"]
 
@@ -1156,7 +1236,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                     regime_tag = ""
                 msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | {ctx}"
                 db.log_alert(alert_type, sym, msg, severity)
-                new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
+                new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
+                                   "category": _category_for_alert_type(alert_type)})
 
         # RSI extremes: only alert when price is also moving (avoids noisy flat days)
         # Secondary gate: require elevated volume OR clear MA breach to filter noise
@@ -1168,21 +1249,24 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                     quality, ctx = _tech_context(s, pred, vol_ratio)
                     msg = f"{sym} RSI={rsi:.0f} — oversold, watch for bounce | {ctx}"
                     db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
-                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                       "category": "rsi"})
             elif rsi >= rsi_ob and not db.was_alert_sent_today("RSI_OVERBOUGHT", sym):
                 above_ma50 = s.get("ma50") and price_val > (s.get("ma50") or 0) * 1.05
                 if vol_ratio >= 1.2 or above_ma50:
                     quality, ctx = _tech_context(s, pred, vol_ratio)
                     msg = f"{sym} RSI={rsi:.0f} — overbought, potential pullback | {ctx}"
                     db.log_alert("RSI_OVERBOUGHT", sym, msg, "MEDIUM")
-                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                       "category": "rsi"})
 
         if vol_ratio >= vol_spike and not db.was_alert_sent_today("VOLUME_SPIKE", sym):
             direction_str = "bullish" if chg > 0.5 else "bearish" if chg < -0.5 else "neutral"
             quality, ctx = _tech_context(s, pred, vol_ratio)
             msg = f"{sym} {vol_ratio:.1f}× volume spike ({direction_str}) | {ctx}"
             db.log_alert("VOLUME_SPIKE", sym, msg, "MEDIUM")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+            new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                               "category": "volume"})
 
         # ML alert: require actual market movement — no alert on stagnant stocks
         # Also require minimum quality score so confidence isn't the only gate
@@ -1192,7 +1276,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             if quality >= 25:
                 msg = f"{sym} {signal} {conf*100:.0f}% confidence | {ctx}"
                 db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
-                new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
+                                   "category": "ml_signal"})
 
         # Combined conviction: AI signal + volume surge + price movement = strongest signal
         if (vol_ratio >= 2.0 and conf >= 0.60 and signal != "NEUTRAL"
@@ -1202,7 +1287,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
                    f"— conviction | {ctx}")
             db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
+            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
+                               "category": "conviction"})
 
         # ── Multi-factor combined signal ──────────────────────────────────────────
         # Fires when RSI + volume trend + MA alignment + MACD all point the same way
@@ -1226,7 +1312,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                    f"(score {combo['score']}/100){mt_str} | {sig_str}")
             severity = "HIGH" if (combo["score"] >= 75 or is_high_conf) else "MEDIUM"
             db.log_alert("COMBINED_SIGNAL", sym, msg, severity)
-            new_alerts.append({"symbol": sym, "message": msg, "severity": severity})
+            new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
+                               "category": "combined_signal"})
 
         # ── Long-term investing opportunity ───────────────────────────────────────
         # Weekly dedup: only re-alert on same stock once per 7 days
@@ -1235,7 +1322,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             if lt_score >= 75:
                 msg = f"{sym} long-term setup {lt_score}/100 | {lt_ctx}"
                 db.log_alert("LONGTERM_BUY", sym, msg, "MEDIUM")
-                new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                   "category": "longterm"})
 
     for e in earnings:
         sym  = e["symbol"]
@@ -1245,7 +1333,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             rxn_str = f" | Avg reaction: {rxn:+.1f}%" if rxn is not None else ""
             msg = f"{sym} earnings in {days} day(s) -- {e['earnings_date']}{rxn_str}"
             db.log_alert("EARNINGS_UPCOMING", sym, msg, "HIGH")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH"})
+            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
+                               "category": "earnings"})
 
     # ── Focus group: correlation divergence ───────────────────────────────────
     if focus_syms:
@@ -1255,7 +1344,7 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             if not db.was_alert_sent_today("FOCUS_DIVERGENCE", sym):
                 db.log_alert("FOCUS_DIVERGENCE", sym, div["message"], div["severity"])
                 new_alerts.append({"symbol": sym, "message": div["message"],
-                                   "severity": div["severity"]})
+                                   "severity": div["severity"], "category": "focus"})
 
     # ── Focus group: news catalyst detection ──────────────────────────────────
     _news_signals: dict = {}
@@ -1268,7 +1357,8 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                     if not db.was_alert_sent_today(alert_type, sym):
                         msg = f"{sym} [{cat['type']}] {cat['headline']}"
                         db.log_alert(alert_type, sym, msg, "MEDIUM")
-                        new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM"})
+                        new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                           "category": "news"})
         except Exception as _ne:
             print(f"[news] fetch error: {_ne}")
 
@@ -1286,8 +1376,10 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
         # Admin notification (email only — admin has no stored phone in config)
         send_email(subject, html, config)
 
-        # Subscriber fan-out: email AND/OR SMS per subscriber
-        counts = notify_subscribers(subject, html, sms_text, alerted_syms, config)
+        # Subscriber fan-out: email AND/OR SMS per subscriber, gated by each
+        # subscriber's own severity/category preferences (see /preferences)
+        counts = notify_subscribers(subject, html, sms_text, alerted_syms, config,
+                                    alerts_meta=new_alerts)
         print(f"[alert] {subject} | email={counts['email_sent']} sms={counts['sms_sent']}")
 
     return new_alerts
@@ -1370,6 +1462,9 @@ def send_sweep_alert(sweeps: list[dict], config: dict) -> int:
     )[:160]
 
     send_email(subject, html, config)
-    counts = notify_subscribers(subject, html, sms_text, set(syms), config)
+    # Sweeps/dark-pool blocks are institutional flow leads — HIGH severity,
+    # "flow" category, so they respect a subscriber's category preferences.
+    alerts_meta = [{"symbol": sym, "severity": "HIGH", "category": "flow"} for sym in syms]
+    counts = notify_subscribers(subject, html, sms_text, set(syms), config, alerts_meta=alerts_meta)
     print(f"[sweep alert] {subject} | email={counts['email_sent']} sms={counts['sms_sent']}")
     return counts["email_sent"] + counts["sms_sent"]
