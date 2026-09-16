@@ -4263,7 +4263,7 @@ function loadOpenOrders() {{
           + '<td>'+sp+'</td>'
           + '<td class="'+sc2+'">'+st+'</td>'
           + '<td style="color:#475569;font-size:11px">'+(o.created_at||'').slice(0,10)+'</td>'
-          + '<td><button class="cancel-btn" onclick="cancelOrder(\''+o.id+'\',this)">Cancel</button></td>'
+          + '<td><button class="cancel-btn" onclick="cancelOrder(\\\''+o.id+'\\\',this)">Cancel</button></td>'
           + '</tr>';
       }}).join('');
     }})
