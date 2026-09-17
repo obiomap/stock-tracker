@@ -121,6 +121,18 @@ def _add_interaction_features(
     return X_imp, list(base_cols)
 
 
+def _recency_weights(n: int, half_life: int = 252) -> np.ndarray:
+    """
+    Exponential recency decay for training samples: the most recent row (last
+    in chronological order) gets weight 1.0, decaying by half every
+    `half_life` rows back (~1 trading year by default). Lets the model react
+    to the current regime instead of treating a 4-year-old row the same as
+    yesterday's.
+    """
+    age = np.arange(n - 1, -1, -1)
+    return np.power(0.5, age / half_life)
+
+
 def _load_model():
     """Load legacy model bundle and scaler. Returns (bundle, scaler) or (None, None)."""
     try:
@@ -157,12 +169,19 @@ def _load_advanced_model() -> Optional[dict]:
 # ── Training helpers ──────────────────────────────────────────────────────────
 
 def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
-                  base_cols: list[str]) -> dict:
+                  base_cols: list[str],
+                  sample_weight: Optional[np.ndarray] = None) -> dict:
     """
     Train RF + ET + HistGBM on one target window.
-    Returns a self-contained bundle with embedded imputer and scaler.
-    Walk-forward split (80/20) gives out-of-sample accuracy and
-    high-confidence (≥70% prob) precision on the held-out 20%.
+    Returns a self-contained bundle with embedded imputer, scaler, and an
+    isotonic probability calibrator. Walk-forward split (80/20) gives
+    out-of-sample accuracy and high-confidence (≥70% prob) precision on the
+    held-out 20%.
+
+    sample_weight (optional): per-row training weight, e.g. recency decay --
+    passed straight through to each estimator's .fit(). Split alongside
+    X/y so held-out evaluation always uses the same rows regardless of
+    weighting.
     """
     from sklearn.ensemble import (
         RandomForestClassifier, ExtraTreesClassifier,
@@ -170,14 +189,19 @@ def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
     )
     from sklearn.preprocessing import StandardScaler
     from sklearn.impute import SimpleImputer
+    from sklearn.isotonic import IsotonicRegression
 
     imputer = SimpleImputer(strategy="median")
     X_imp   = imputer.fit_transform(X_raw)
     X_aug, aug_cols = _add_interaction_features(X_imp, base_cols)
 
+    if sample_weight is None:
+        sample_weight = np.ones(len(y))
+
     split      = int(len(X_aug) * 0.80)
     X_tr, X_te = X_aug[:split], X_aug[split:]
     y_tr, y_te = y[:split],     y[split:]
+    w_tr, w_te = sample_weight[:split], sample_weight[split:]
 
     scaler    = StandardScaler()
     X_tr_s    = scaler.fit_transform(X_tr)
@@ -187,21 +211,22 @@ def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
         n_estimators=300, max_depth=8, min_samples_leaf=8,
         max_features="sqrt", random_state=42, n_jobs=-1,
     )
-    rf.fit(X_tr_s, y_tr)
+    rf.fit(X_tr_s, y_tr, sample_weight=w_tr)
 
     et = ExtraTreesClassifier(
         n_estimators=300, max_depth=8, min_samples_leaf=8,
         max_features="sqrt", random_state=43, n_jobs=-1,
     )
-    et.fit(X_tr_s, y_tr)
+    et.fit(X_tr_s, y_tr, sample_weight=w_tr)
 
     hgbm = HistGradientBoostingClassifier(
         max_iter=300, max_depth=6, min_samples_leaf=10,
         learning_rate=0.04, l2_regularization=0.1, random_state=44,
     )
-    hgbm.fit(X_tr_s, y_tr)
+    hgbm.fit(X_tr_s, y_tr, sample_weight=w_tr)
 
     # Out-of-sample evaluation
+    calibrator = None
     if len(y_te) > 0:
         p_rf   = rf.predict_proba(X_te_s)[:, 1]
         p_et   = et.predict_proba(X_te_s)[:, 1]
@@ -218,6 +243,19 @@ def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
             hc_precision = float(correct / hc_n)
         else:
             hc_precision = 0.0
+        # Calibrate the blended probability against real hit-rate on the
+        # held-out fold, so "70% confidence" downstream actually means
+        # ~70% empirical odds instead of just whatever the raw ensemble
+        # blend happens to output (tree ensembles are notoriously over/under
+        # confident at the extremes). Needs enough held-out rows to be
+        # trustworthy -- skip (identity passthrough) otherwise.
+        if len(y_te) >= 30:
+            try:
+                calibrator = IsotonicRegression(out_of_bounds="clip",
+                                                y_min=0.0, y_max=1.0)
+                calibrator.fit(blended, y_te)
+            except Exception:
+                calibrator = None
     else:
         oos_acc = hc_precision = 0.0
         hc_n    = 0
@@ -233,6 +271,7 @@ def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
         "rf": rf, "et": et, "hgbm": hgbm,
         "imputer":           imputer,
         "scaler":            scaler,
+        "calibrator":        calibrator,
         "base_feature_cols": list(base_cols),
         "feature_cols":      aug_cols,
         "feature_importance": fi,
@@ -241,6 +280,7 @@ def _train_bundle(X_raw: np.ndarray, y: np.ndarray,
         "oos_accuracy":      round(oos_acc,      3),
         "hc_precision":      round(hc_precision, 3),
         "hc_n":              hc_n,
+        "calibrated":        calibrator is not None,
     }
 
 
@@ -289,28 +329,33 @@ def train_model(all_hists: dict[str, pd.DataFrame]) -> tuple[bool, dict]:
         def _build(frames, target_col):
             combined = pd.concat(frames, ignore_index=True)
             cols = [c for c in FEATURE_COLS if c in combined.columns]
-            return combined[cols].values.astype(float), combined[target_col].values, cols
+            weights = np.concatenate([_recency_weights(len(f)) for f in frames])
+            return (combined[cols].values.astype(float), combined[target_col].values,
+                    cols, weights)
 
         print("[predictor] training 3d model...", flush=True)
-        X3, y3, cols3 = _build(frames_3d, "target")
-        b3d = _train_bundle(X3, y3, cols3)
+        X3, y3, cols3, w3 = _build(frames_3d, "target")
+        b3d = _train_bundle(X3, y3, cols3, w3)
         print(f"[predictor] 3d  OOS={b3d['oos_accuracy']:.1%}  "
-              f"HC-precision={b3d['hc_precision']:.1%} (n={b3d['hc_n']})", flush=True)
+              f"HC-precision={b3d['hc_precision']:.1%} (n={b3d['hc_n']})  "
+              f"calibrated={b3d['calibrated']}", flush=True)
 
         b5d = b10d = None
         if frames_5d:
             print("[predictor] training 5d model...", flush=True)
-            X5, y5, cols5 = _build(frames_5d, "target_5d")
-            b5d = _train_bundle(X5, y5, cols5)
+            X5, y5, cols5, w5 = _build(frames_5d, "target_5d")
+            b5d = _train_bundle(X5, y5, cols5, w5)
             print(f"[predictor] 5d  OOS={b5d['oos_accuracy']:.1%}  "
-                  f"HC-precision={b5d['hc_precision']:.1%} (n={b5d['hc_n']})", flush=True)
+                  f"HC-precision={b5d['hc_precision']:.1%} (n={b5d['hc_n']})  "
+                  f"calibrated={b5d['calibrated']}", flush=True)
 
         if frames_10d:
             print("[predictor] training 10d model...", flush=True)
-            X10, y10, cols10 = _build(frames_10d, "target_10d")
-            b10d = _train_bundle(X10, y10, cols10)
+            X10, y10, cols10, w10 = _build(frames_10d, "target_10d")
+            b10d = _train_bundle(X10, y10, cols10, w10)
             print(f"[predictor] 10d OOS={b10d['oos_accuracy']:.1%}  "
-                  f"HC-precision={b10d['hc_precision']:.1%} (n={b10d['hc_n']})", flush=True)
+                  f"HC-precision={b10d['hc_precision']:.1%} (n={b10d['hc_n']})  "
+                  f"calibrated={b10d['calibrated']}", flush=True)
 
         ADV_MODEL_PATH.parent.mkdir(exist_ok=True)
         adv = {
@@ -329,6 +374,7 @@ def train_model(all_hists: dict[str, pd.DataFrame]) -> tuple[bool, dict]:
             "et":                b3d["et"],
             "hgbm":              b3d["hgbm"],
             "imputer":           b3d["imputer"],
+            "calibrator":        b3d["calibrator"],
             "feature_cols":      b3d["feature_cols"],
             "feature_importance": b3d["feature_importance"],
             "n_samples":         b3d["n_samples"],
@@ -372,7 +418,14 @@ def _predict_from_bundle(bundle: Optional[dict], features: dict) -> Optional[flo
         p_rf    = rf.predict_proba(X_s)[0][1]
         p_et    = et.predict_proba(X_s)[0][1]   if et   else p_rf
         p_hgbm  = hgbm.predict_proba(X_s)[0][1] if hgbm else p_rf
-        return round(float(p_rf * 0.30 + p_et * 0.30 + p_hgbm * 0.40), 3)
+        raw     = p_rf * 0.30 + p_et * 0.30 + p_hgbm * 0.40
+        calibrator = bundle.get("calibrator")
+        if calibrator is not None:
+            try:
+                raw = float(calibrator.predict([raw])[0])
+            except Exception:
+                pass
+        return round(float(raw), 3)
     except Exception:
         return None
 
@@ -541,6 +594,9 @@ def get_model_metadata() -> dict:
             "hc_precision_5d":   b5.get("hc_precision"),
             "oos_accuracy_10d":  b10.get("oos_accuracy"),
             "hc_precision_10d":  b10.get("hc_precision"),
+            "calibrated_3d":     b3.get("calibrated", False),
+            "calibrated_5d":     b5.get("calibrated", False),
+            "calibrated_10d":    b10.get("calibrated", False),
             "trained_at":        adv.get("trained_at"),
             "multi_timeframe":   True,
         }
