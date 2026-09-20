@@ -173,25 +173,34 @@ def build_sms_summary(stocks: list[dict], alert_symbols: set[str] | None = None)
     Build a standalone ≤160-char SMS covering the top AI signal, top mover,
     and any RSI extreme. Works without email — suitable as the sole notification
     for phone-only subscribers.
+
+    Buys-only policy: every pick here must clear the BUY verdict bar, same as
+    the email report -- no bearish/overbought stock gets surfaced as the
+    "top mover" or "RSI extreme" just because it moved the most.
     """
     pool = [s for s in stocks if not alert_symbols or s["symbol"] in alert_symbols] or stocks
 
+    def _is_buy(s: dict, quality: int = 0) -> bool:
+        return _alert_verdict(s.get("prediction"), s.get("prediction_confidence") or 0,
+                              quality=quality) == "BUY"
+
     signals = sorted(
         [s for s in pool if s.get("prediction") in ("BULLISH", "BEARISH")
-         and (s.get("prediction_confidence") or 0) >= 0.50],
+         and (s.get("prediction_confidence") or 0) >= 0.50 and _is_buy(s)],
         key=lambda s: s.get("prediction_confidence") or 0, reverse=True,
     )
     movers = sorted(
-        [s for s in pool if s.get("change_pct") is not None],
+        [s for s in pool if s.get("change_pct") is not None and _is_buy(s)],
         key=lambda s: abs(s.get("change_pct") or 0), reverse=True,
     )
     extremes = sorted(
-        [s for s in pool if s.get("rsi") is not None and (s["rsi"] <= 30 or s["rsi"] >= 70)],
+        [s for s in pool if s.get("rsi") is not None and s["rsi"] <= 30 and _is_buy(s)],
         key=lambda s: abs((s.get("rsi") or 50) - 50), reverse=True,
     )
     vol_spikes = sorted(
         [s for s in pool if s.get("volume") and s.get("avg_volume")
-         and (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1) >= 2.0],
+         and (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1) >= 2.0
+         and _is_buy(s, quality=60)],
         key=lambda s: (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1),
         reverse=True,
     )
@@ -438,10 +447,13 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     sec_earn = _section("&#x1F4B0;", "Upcoming Earnings", hdr_earn, rows_earn)
 
     # ── 1. AI TOP SIGNALS ─────────────────────────────────────────────────────
+    # Buys-only policy: only stocks that actually clear the BUY verdict bar
+    # make it into the email -- bearish/weak signals are omitted entirely.
     ai_stocks = [
         s for s in stocks
         if s.get("prediction") in ("BULLISH", "BEARISH")
         and (s.get("prediction_confidence") or 0) >= 0.50
+        and _alert_verdict(s.get("prediction"), s.get("prediction_confidence") or 0) == "BUY"
     ]
     ai_stocks.sort(key=lambda s: s.get("prediction_confidence") or 0, reverse=True)
 
@@ -482,7 +494,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'</tr>'
         )
     if not rows_ai:
-        rows_ai = _empty_row(9, "No high-confidence signals today — check back after market close")
+        rows_ai = _empty_row(9, "No BUY-worthy signals today — check back after market close")
 
     hdr_ai = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
               _th("Vol", "center") + _th("RSI", "center") +
@@ -491,7 +503,11 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     sec_ai = _section("&#x1F916;", "AI Top Signals", hdr_ai, rows_ai)
 
     # ── 2. TODAY'S TOP MOVERS ─────────────────────────────────────────────────
-    movers = [s for s in stocks if s.get("change_pct") is not None and s.get("price")]
+    movers = [
+        s for s in stocks
+        if s.get("change_pct") is not None and s.get("price")
+        and _alert_verdict(s.get("prediction"), s.get("prediction_confidence") or 0) == "BUY"
+    ]
     movers.sort(key=lambda s: abs(s.get("change_pct") or 0), reverse=True)
 
     rows_movers = ""
@@ -520,7 +536,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'</tr>'
         )
     if not rows_movers:
-        rows_movers = _empty_row(6)
+        rows_movers = _empty_row(6, "No movers cleared the BUY bar today")
 
     hdr_movers = (_th("Symbol") + _th("Price", "right") +
                   _th("Move", "center") + _th("Vol vs Avg", "center") +
@@ -528,10 +544,19 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     sec_movers = _section("&#x1F525;", "Today's Top Movers", hdr_movers, rows_movers)
 
     # ── 3. TECHNICAL EXTREMES ─────────────────────────────────────────────────
+    # Overbought is never a BUY by definition, so under the buys-only policy
+    # only oversold stocks that also clear the verdict bar survive here.
+    def _extreme_is_buy(s: dict) -> bool:
+        rsi = s.get("rsi") or 50
+        if rsi > 30:
+            return False
+        return _alert_verdict(s.get("prediction"), s.get("prediction_confidence") or 0) == "BUY"
+
     extremes = [
         s for s in stocks
         if s.get("rsi") is not None and s.get("price")
         and (s["rsi"] <= 30 or s["rsi"] >= 70)
+        and _extreme_is_buy(s)
     ]
     extremes.sort(key=lambda s: abs((s.get("rsi") or 50) - 50), reverse=True)
 
@@ -564,7 +589,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'</tr>'
         )
     if not rows_ext:
-        rows_ext = _empty_row(7, "No RSI extremes today — market conditions are neutral")
+        rows_ext = _empty_row(7, "No buy-worthy oversold setups today")
 
     hdr_ext = (_th("Symbol") + _th("Price", "right") + _th("RSI", "center") +
                _th("Change", "center") + _th("Condition", "center") +
@@ -575,10 +600,16 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
     def _vol_ratio(s: dict) -> float:
         return (s.get("volume") or 0) / max(s.get("avg_volume") or 1, 1)
 
+    def _vol_spike_is_buy(s: dict) -> bool:
+        ratio = _vol_ratio(s)
+        return _alert_verdict(s.get("prediction", "NEUTRAL"), s.get("prediction_confidence") or 0,
+                              quality=60 if ratio >= 2.0 else 30) == "BUY"
+
     vol_spikes = [
         s for s in stocks
         if s.get("volume") and s.get("avg_volume") and s.get("price")
         and _vol_ratio(s) >= 1.5
+        and _vol_spike_is_buy(s)
     ]
     vol_spikes.sort(key=_vol_ratio, reverse=True)
 
@@ -630,7 +661,7 @@ def build_email_report(stocks: list[dict], earnings: list[dict], alerts: list[di
             f'</tr>'
         )
     if not rows_vol:
-        rows_vol = _empty_row(8, "No unusual volume today — all stocks trading near average")
+        rows_vol = _empty_row(8, "No BUY-worthy volume spikes today")
 
     hdr_vol = (_th("Symbol") + _th("Price", "right") + _th("Change", "center") +
                _th("Vol vs Avg", "center") + _th("Signal", "center") + _th("RSI", "center") +
@@ -1282,41 +1313,38 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 else:
                     regime_tag = ""
                 verdict = _alert_verdict(signal, conf, quality)
-                msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | Why: {ctx} | {verdict}"
-                db.log_alert(alert_type, sym, msg, severity)
-                new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
-                                   "category": _category_for_alert_type(alert_type)})
+                if verdict == "BUY":
+                    msg = f"{sym} {direction} {chg:+.2f}%{regime_tag} | Why: {ctx} | {verdict}"
+                    db.log_alert(alert_type, sym, msg, severity)
+                    new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
+                                       "category": _category_for_alert_type(alert_type)})
 
         # RSI extremes: only alert when price is also moving (avoids noisy flat days)
         # Secondary gate: require elevated volume OR clear MA breach to filter noise
-        if rsi is not None and movement_confirmed:
+        # Only oversold is ever alert-worthy here -- overbought is never a BUY by
+        # definition, so it's not worth firing under the buys-only alert policy.
+        if rsi is not None and movement_confirmed and rsi <= rsi_os:
             price_val = s.get("price") or 0
-            if rsi <= rsi_os and not db.was_alert_sent_today("RSI_OVERSOLD", sym):
+            if not db.was_alert_sent_today("RSI_OVERSOLD", sym):
                 below_ma20 = s.get("ma20") and price_val < (s.get("ma20") or 0) * 1.01
                 if vol_ratio >= 1.2 or below_ma20:
                     quality, ctx = _tech_context(s, pred, vol_ratio)
                     verdict = _alert_verdict(signal, conf, quality)
-                    msg = f"{sym} RSI={rsi:.0f} — oversold, watch for bounce | Why: {ctx} | {verdict}"
-                    db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
-                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
-                                       "category": "rsi"})
-            elif rsi >= rsi_ob and not db.was_alert_sent_today("RSI_OVERBOUGHT", sym):
-                above_ma50 = s.get("ma50") and price_val > (s.get("ma50") or 0) * 1.05
-                if vol_ratio >= 1.2 or above_ma50:
-                    quality, ctx = _tech_context(s, pred, vol_ratio)
-                    msg = f"{sym} RSI={rsi:.0f} — overbought, potential pullback | Why: {ctx} | NOT A BUY (overbought)"
-                    db.log_alert("RSI_OVERBOUGHT", sym, msg, "MEDIUM")
-                    new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
-                                       "category": "rsi"})
+                    if verdict == "BUY":
+                        msg = f"{sym} RSI={rsi:.0f} — oversold, watch for bounce | Why: {ctx} | {verdict}"
+                        db.log_alert("RSI_OVERSOLD", sym, msg, "MEDIUM")
+                        new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                           "category": "rsi"})
 
         if vol_ratio >= vol_spike and not db.was_alert_sent_today("VOLUME_SPIKE", sym):
             direction_str = "bullish" if chg > 0.5 else "bearish" if chg < -0.5 else "neutral"
             quality, ctx = _tech_context(s, pred, vol_ratio)
             verdict = _alert_verdict("BULLISH" if direction_str == "bullish" else signal, conf, quality)
-            msg = f"{sym} {vol_ratio:.1f}× volume spike ({direction_str}) | Why: {ctx} | {verdict}"
-            db.log_alert("VOLUME_SPIKE", sym, msg, "MEDIUM")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
-                               "category": "volume"})
+            if verdict == "BUY":
+                msg = f"{sym} {vol_ratio:.1f}× volume spike ({direction_str}) | Why: {ctx} | {verdict}"
+                db.log_alert("VOLUME_SPIKE", sym, msg, "MEDIUM")
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                   "category": "volume"})
 
         # ML alert: require actual market movement — no alert on stagnant stocks
         # Also require minimum quality score so confidence isn't the only gate
@@ -1325,10 +1353,11 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             quality, ctx = _tech_context(s, pred, vol_ratio)
             if quality >= 25:
                 verdict = _alert_verdict(signal, conf, quality)
-                msg = f"{sym} {signal} {conf*100:.0f}% confidence | Why: {ctx} | {verdict}"
-                db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
-                new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
-                                   "category": "ml_signal"})
+                if verdict == "BUY":
+                    msg = f"{sym} {signal} {conf*100:.0f}% confidence | Why: {ctx} | {verdict}"
+                    db.log_alert(f"ML_{signal}", sym, msg, "HIGH")
+                    new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
+                                       "category": "ml_signal"})
 
         # Combined conviction: AI signal + volume surge + price movement = strongest signal
         if (vol_ratio >= 2.0 and conf >= 0.60 and signal != "NEUTRAL"
@@ -1336,11 +1365,12 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 and not db.was_alert_sent_today("VOL_CONFIRMED", sym)):
             quality, ctx = _tech_context(s, pred, vol_ratio)
             verdict = _alert_verdict(signal, conf, quality)
-            msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
-                   f"— conviction | Why: {ctx} | {verdict}")
-            db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
-                               "category": "conviction"})
+            if verdict == "BUY":
+                msg = (f"{sym} {signal} {conf*100:.0f}% + {vol_ratio:.1f}× volume "
+                       f"— conviction | Why: {ctx} | {verdict}")
+                db.log_alert("VOL_CONFIRMED", sym, msg, "HIGH")
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
+                                   "category": "conviction"})
 
         # ── Multi-factor combined signal ──────────────────────────────────────────
         # Fires when RSI + volume trend + MA alignment + MACD all point the same way
@@ -1361,12 +1391,13 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 if all(p is not None for p in [p3, p5, p10]):
                     mt_str = f" [3d:{p3:.0%} 5d:{p5:.0%} 10d:{p10:.0%}]"
             verdict = _alert_verdict(combo["direction"], quality=combo["score"])
-            msg = (f"{sym} multi-factor {combo['direction']}{hc_tag} "
-                   f"(score {combo['score']}/100){mt_str} | Why: {sig_str} | {verdict}")
-            severity = "HIGH" if (combo["score"] >= 75 or is_high_conf) else "MEDIUM"
-            db.log_alert("COMBINED_SIGNAL", sym, msg, severity)
-            new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
-                               "category": "combined_signal"})
+            if verdict == "BUY":
+                msg = (f"{sym} multi-factor {combo['direction']}{hc_tag} "
+                       f"(score {combo['score']}/100){mt_str} | Why: {sig_str} | {verdict}")
+                severity = "HIGH" if (combo["score"] >= 75 or is_high_conf) else "MEDIUM"
+                db.log_alert("COMBINED_SIGNAL", sym, msg, severity)
+                new_alerts.append({"symbol": sym, "message": msg, "severity": severity,
+                                   "category": "combined_signal"})
 
         # ── Long-term investing opportunity ───────────────────────────────────────
         # Weekly dedup: only re-alert on same stock once per 7 days
@@ -1390,10 +1421,11 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                 why += f", historically reacts {rxn:+.1f}% on avg"
             verdict = _alert_verdict(_e_pred.get("signal"), _e_pred.get("confidence", 0),
                                      quality=55 if (rxn or 0) > 0 else 0)
-            msg = f"{sym} earnings in {days} day(s) -- {e['earnings_date']}{rxn_str} | Why: {why} | {verdict}"
-            db.log_alert("EARNINGS_UPCOMING", sym, msg, "HIGH")
-            new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
-                               "category": "earnings"})
+            if verdict == "BUY":
+                msg = f"{sym} earnings in {days} day(s) -- {e['earnings_date']}{rxn_str} | Why: {why} | {verdict}"
+                db.log_alert("EARNINGS_UPCOMING", sym, msg, "HIGH")
+                new_alerts.append({"symbol": sym, "message": msg, "severity": "HIGH",
+                                   "category": "earnings"})
 
     # ── Focus group: correlation divergence ───────────────────────────────────
     if focus_syms:
@@ -1403,10 +1435,11 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
             if not db.was_alert_sent_today("FOCUS_DIVERGENCE", sym):
                 verdict = _alert_verdict(div["direction"],
                                          quality=60 if abs(div["z_score"]) >= 2.5 else 35)
-                msg = f"{div['message']} | Why: diverging {abs(div['z_score']):.1f}σ from AI focus group | {verdict}"
-                db.log_alert("FOCUS_DIVERGENCE", sym, msg, div["severity"])
-                new_alerts.append({"symbol": sym, "message": msg,
-                                   "severity": div["severity"], "category": "focus"})
+                if verdict == "BUY":
+                    msg = f"{div['message']} | Why: diverging {abs(div['z_score']):.1f}σ from AI focus group | {verdict}"
+                    db.log_alert("FOCUS_DIVERGENCE", sym, msg, div["severity"])
+                    new_alerts.append({"symbol": sym, "message": msg,
+                                       "severity": div["severity"], "category": "focus"})
 
     # ── Focus group: news catalyst detection ──────────────────────────────────
     _news_signals: dict = {}
@@ -1420,12 +1453,13 @@ def check_and_fire_alerts(stocks: list[dict], earnings: list[dict],
                         _cat_lean = ("BULLISH" if cat["type"] in ("UPGRADE", "LAUNCH", "DEAL")
                                      else "BEARISH" if cat["type"] in ("DOWNGRADE", "REGULATORY")
                                      else "NEUTRAL")
-                        verdict = _alert_verdict(_cat_lean, quality=50)
-                        msg = (f"{sym} [{cat['type']}] {cat['headline']} | "
-                               f"Why: {cat['type'].title()} news catalyst | {verdict}")
-                        db.log_alert(alert_type, sym, msg, "MEDIUM")
-                        new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
-                                           "category": "news"})
+                        verdict = _alert_verdict(_cat_lean, quality=55)
+                        if verdict == "BUY":
+                            msg = (f"{sym} [{cat['type']}] {cat['headline']} | "
+                                   f"Why: {cat['type'].title()} news catalyst | {verdict}")
+                            db.log_alert(alert_type, sym, msg, "MEDIUM")
+                            new_alerts.append({"symbol": sym, "message": msg, "severity": "MEDIUM",
+                                               "category": "news"})
         except Exception as _ne:
             print(f"[news] fetch error: {_ne}")
 
