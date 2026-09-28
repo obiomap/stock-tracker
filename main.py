@@ -1227,6 +1227,8 @@ def serve(host, port, http_port, no_tls):
         console.print("\n[dim]Press Ctrl+C to stop.[/dim]\n")
         import logging
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
+        from tracker import watchdog
+        watchdog.start(f"http://127.0.0.1:{http_only_port}/health")
         app.run(host=host, port=http_only_port, debug=False, threaded=True)
         return
 

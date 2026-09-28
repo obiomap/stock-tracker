@@ -1348,7 +1348,7 @@ def create_app() -> Flask:
     _app.secret_key = _secret
 
     # ── Auth gate ─────────────────────────────────────────────────────────────
-    _PUBLIC_PATHS = {"/", "/login", "/login/request", "/login/verify",
+    _PUBLIC_PATHS = {"/", "/health", "/login", "/login/request", "/login/verify",
                      "/logout", "/subscribe", "/unsubscribe", "/preferences"}
 
     @_app.before_request
@@ -2068,6 +2068,13 @@ def create_app() -> Flask:
         price = next((x["price"] for x in s if x["symbol"] == sym), 0) or 0
         zones = sd_mod.volume_zones(hist, price) if hist is not None else {"demand": [], "supply": [], "poc": None}
         return Response(_json.dumps(zones), mimetype="application/json")
+
+    # ── liveness (Railway deploy healthcheck + tracker/watchdog.py) ───────────
+    # Deliberately touches no DB/network: it answers "can Flask serve?" only.
+
+    @_app.route("/health")
+    def health():
+        return Response("ok", mimetype="text/plain")
 
     # ── main index ────────────────────────────────────────────────────────────
 
