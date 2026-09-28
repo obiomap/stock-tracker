@@ -8,6 +8,7 @@ Architecture:
   - High-confidence flag: all 3 timeframes agree at ≥70% probability
   - Per-symbol accuracy weighting from historical predictions_log
 """
+import threading
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,33 @@ SCALER_PATH         = Path(__file__).parent.parent / "models" / "scaler.pkl"
 UPTREND_MODEL_PATH  = Path(__file__).parent.parent / "models" / "uptrend_model.pkl"
 UPTREND_SCALER_PATH = Path(__file__).parent.parent / "models" / "uptrend_scaler.pkl"
 ADV_MODEL_PATH      = Path(__file__).parent.parent / "models" / "advanced_model.pkl"
+
+# In-memory model cache: path -> (mtime, obj).
+# Incident 2026-09-27: every prediction re-unpickled the 60MB advanced model
+# (once per stock, every refresh). The allocation churn fragmented the heap
+# and RSS grew ~90MB/hr until the container hit its 8GB cap and stopped
+# serving. Load once, reload only when retraining rewrites the file.
+_model_cache: dict = {}
+_model_cache_lock = threading.Lock()
+
+
+def _cached_load(path: Path):
+    """joblib.load with an mtime-keyed cache. Raises if missing and never loaded."""
+    import joblib
+    mtime = path.stat().st_mtime
+    with _model_cache_lock:
+        hit = _model_cache.get(path)
+        if hit and hit[0] == mtime:
+            return hit[1]
+        try:
+            obj = joblib.load(path)
+        except Exception:
+            # Mid-write during retrain -> keep serving the previous model
+            if hit:
+                return hit[1]
+            raise
+        _model_cache[path] = (mtime, obj)
+        return obj
 
 # Feature set used for ML training and inference (30 features)
 FEATURE_COLS = [
@@ -136,10 +164,9 @@ def _recency_weights(n: int, half_life: int = 252) -> np.ndarray:
 def _load_model():
     """Load legacy model bundle and scaler. Returns (bundle, scaler) or (None, None)."""
     try:
-        import joblib
         if MODEL_PATH.exists() and SCALER_PATH.exists():
-            bundle = joblib.load(MODEL_PATH)
-            scaler = joblib.load(SCALER_PATH)
+            bundle = _cached_load(MODEL_PATH)
+            scaler = _cached_load(SCALER_PATH)
             if not isinstance(bundle, dict):
                 bundle = {
                     "rf":                 bundle,
@@ -158,9 +185,8 @@ def _load_model():
 def _load_advanced_model() -> Optional[dict]:
     """Load the multi-timeframe advanced model bundle or None."""
     try:
-        import joblib
         if ADV_MODEL_PATH.exists():
-            return joblib.load(ADV_MODEL_PATH)
+            return _cached_load(ADV_MODEL_PATH)
     except Exception:
         pass
     return None
@@ -540,10 +566,9 @@ def get_symbol_historical_accuracy(symbol: str, min_scored: int = 5) -> Optional
 def _load_uptrend_model():
     """Load uptrend model bundle and scaler. Returns (bundle, scaler) or (None, None)."""
     try:
-        import joblib
         if UPTREND_MODEL_PATH.exists() and UPTREND_SCALER_PATH.exists():
-            bundle = joblib.load(UPTREND_MODEL_PATH)
-            scaler = joblib.load(UPTREND_SCALER_PATH)
+            bundle = _cached_load(UPTREND_MODEL_PATH)
+            scaler = _cached_load(UPTREND_SCALER_PATH)
             return bundle, scaler
     except Exception:
         pass

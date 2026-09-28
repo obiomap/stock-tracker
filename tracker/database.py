@@ -15,8 +15,22 @@ else:
 DB_PATH = _DATA_DIR / "stocks.db"
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """sqlite3's `with conn:` only commits/rolls back; this also closes.
+
+    Every caller uses `with get_connection() as conn:`, so without this each
+    call leaked an open connection until GC, spamming ResourceWarnings hard
+    enough to hit Railway's 500 logs/sec cap.
+    """
+    def __exit__(self, *exc):
+        try:
+            return super().__exit__(*exc)
+        finally:
+            self.close()
+
+
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     return conn
 
